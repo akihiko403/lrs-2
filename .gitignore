@@ -1,0 +1,4 @@
+config.php
+server.log
+server-error.log
+/uploads/*
