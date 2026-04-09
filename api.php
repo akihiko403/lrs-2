@@ -293,12 +293,12 @@ function save_resource_action(): void
     $isAdministrator = ($_SESSION['user']['role'] ?? '') === 'Administrator';
 
     if ($isAdministrator) {
-        $status = $status !== '' ? $status : ($existing['status'] ?? 'Pending Review');
+        $status = $status !== '' ? $status : ($existing['status'] ?? 'Active');
         if (!in_array($status, $allowedStatuses, true)) {
             error_response('Invalid resource status.', 422);
         }
     } else {
-        $status = $existing['status'] ?? 'Pending Review';
+        $status = $existing['status'] ?? 'Active';
     }
 
     $filePayload = handle_uploaded_file($fileType, $existing);

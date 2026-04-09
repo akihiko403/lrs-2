@@ -29,7 +29,7 @@
 html { scroll-behavior: smooth; }
 body {
   margin: 0;
-  font-family: "Manrope", sans-serif;
+  font-family: "Poppins", sans-serif;
   color: var(--text);
   background:
     radial-gradient(circle at top left, rgba(13, 107, 87, 0.18), transparent 26%),
@@ -188,7 +188,7 @@ button, input, select, textarea { font: inherit; }
 }
 .hero h1, .section-heading h2, .admin-panel__header h1, .detail-panel h2 {
   margin: 0;
-  font-family: "Source Serif 4", serif;
+  font-family: "Poppins", sans-serif;
   letter-spacing: -0.03em;
 }
 .hero h1 {
@@ -221,6 +221,10 @@ button, input, select, textarea { font: inherit; }
   grid-template-columns: minmax(0, 2.8fr) minmax(190px, 1fr) minmax(190px, 1fr) auto;
   padding: 10px;
   border-radius: 24px;
+}
+.search-box--hero--single {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 1460px;
 }
 .search-box--hero .field input,
 .search-box--hero .field select {
@@ -277,6 +281,9 @@ button, input, select, textarea { font: inherit; }
 }
 .resource-card {
   min-width: 0;
+  padding: var(--space-4);
+  display: grid;
+  gap: 12px;
 }
 .category-card {
   position: relative;
@@ -304,8 +311,8 @@ button, input, select, textarea { font: inherit; }
   background: rgba(13, 107, 87, 0.08);
   transform: rotate(20deg);
 }
-.category-card h3, .resource-card h3, .stat-card h3, .report-card h3 { margin-top: 0; margin-bottom: 8px; }
-.resource-card, .stat-card, .list-card, .report-card { display: grid; gap: var(--space-3); }
+.category-card h3, .resource-card h3, .stat-card h3, .report-card h3 { margin-top: 0; margin-bottom: 6px; }
+.stat-card, .list-card, .report-card { display: grid; gap: var(--space-3); }
 .stat-card {
   padding: var(--space-3) var(--space-4);
   gap: var(--space-1);
@@ -320,6 +327,12 @@ button, input, select, textarea { font: inherit; }
   line-height: 1.3;
 }
 .resource-card__badge-row, .resource-meta, .table-actions, .inline-actions, .admin-sidebar__footer, .detail-meta, .viewer-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.resource-card__badge-row {
+  gap: 10px;
+}
+.resource-card h3 {
+  line-height: 1.25;
+}
 .table-actions {
   align-items: center;
   gap: var(--space-1);
@@ -341,7 +354,32 @@ button, input, select, textarea { font: inherit; }
 .pill--neutral { background: rgba(22, 48, 44, 0.08); color: var(--text-soft); }
 .resource-meta, .detail-meta { color: var(--text-soft); font-size: 0.92rem; }
 .resource-meta {
-  gap: 8px;
+  gap: 6px;
+  font-size: 0.88rem;
+}
+.detail-panel .section-heading {
+  align-items: flex-start;
+}
+.detail-panel .section-heading > div:first-child {
+  flex: 1 1 320px;
+}
+.detail-panel .detail-meta {
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.detail-panel .viewer-actions {
+  justify-content: flex-end;
+  align-self: flex-start;
+  margin-bottom: var(--space-4);
+}
+.resource-card p {
+  margin: 0;
+  line-height: 1.45;
+}
+.resource-card .button {
+  min-height: 40px;
+  padding: 9px 16px;
+  margin-top: 2px;
 }
 .admin-layout {
   grid-template-columns: 290px minmax(0, 1fr);
@@ -407,7 +445,7 @@ button, input, select, textarea { font: inherit; }
 .stat-card strong {
   font-size: 1.45rem;
   line-height: 1;
-  font-family: "Source Serif 4", serif;
+  font-family: "Poppins", sans-serif;
 }
 .list-card ul, .category-list, .report-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
 .list-row, .report-list li {
@@ -467,6 +505,9 @@ button, input, select, textarea { font: inherit; }
 .modal-dialog {
   width: min(100%, 560px);
 }
+.modal-dialog--wide {
+  width: min(100%, 980px);
+}
 .modal-card {
   padding: var(--space-5);
   border-radius: 24px;
@@ -484,6 +525,16 @@ button, input, select, textarea { font: inherit; }
 }
 .modal-card__actions {
   justify-content: flex-end;
+}
+.resource-form-shell {
+  display: grid;
+  gap: var(--space-3);
+}
+.resource-form-shell--modal {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .filters-layout { grid-template-columns: 1fr; }
 .filters-panel, .results-panel, .detail-panel, .form-card, .table-wrap, .login-card, .empty-state { padding: var(--space-4); }
@@ -508,19 +559,77 @@ button, input, select, textarea { font: inherit; }
   font-size: 0.92rem;
   white-space: pre-wrap;
 }
+.download-panel {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(247, 251, 249, 0.98), rgba(239, 246, 243, 0.94));
+}
+.download-panel h3,
+.download-panel p {
+  margin: 0;
+}
+.download-list {
+  width: 100%;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+.download-list__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 10px 12px;
+  border: 1px solid rgba(18, 68, 56, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+}
+.download-list__content {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.download-list__content strong,
+.download-list__content span {
+  display: block;
+}
+.download-list__content strong {
+  line-height: 1.2;
+}
+.download-list__content span {
+  color: var(--text-soft);
+  font-size: 0.88rem;
+}
+.download-list__button {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+}
 .login-layout { display: grid; place-items: center; min-height: calc(100vh - 170px); }
-.login-card { width: min(460px, 100%); }
+.login-card { width: min(420px, 100%); }
 .login-card h1, .admin-panel__header p { margin-top: 0; }
+.login-card > .muted {
+  padding-inline: 12px;
+  margin-bottom: var(--space-4);
+}
 .login-card__title {
   display: inline-flex;
   align-items: center;
-  min-height: 52px;
-  padding: 10px 18px;
+  min-height: 40px;
+  padding: 6px 14px;
   margin-bottom: 10px;
   border: 1px solid rgba(18, 68, 56, 0.14);
-  border-radius: 18px;
+  border-radius: 16px;
   background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248, 252, 250, 0.94));
   box-shadow: 0 10px 24px rgba(8, 45, 37, 0.08);
+  font-size: 1.45rem;
+  line-height: 1.1;
 }
 .table-wrap {
   width: 100%;
@@ -619,6 +728,12 @@ th {
 .search-results-shell {
   display: grid;
   gap: 14px;
+}
+.search-results-shell .resource-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  padding-top: 6px;
 }
 .search-results-header {
   display: flex;

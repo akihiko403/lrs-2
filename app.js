@@ -48,6 +48,11 @@ function formatDate(dateString) {
   });
 }
 
+function getLocalDateInputValue(date = new Date()) {
+  const offsetDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
+  return offsetDate.toISOString().slice(0, 10);
+}
+
 function showToast(message) {
   const existing = document.querySelector(".toast");
   if (existing) existing.remove();
@@ -123,7 +128,7 @@ function setSearchParams(values) {
   if (values.category) params.set("category", values.category);
   if (values.type) params.set("type", values.type);
   const query = params.toString();
-  const url = `${window.location.pathname}${query ? `?${query}` : ""}#search`;
+  const url = `${window.location.pathname}${query ? `?${query}` : ""}#home`;
   history.pushState({}, "", url);
   render();
 }
@@ -156,8 +161,10 @@ function filterResources({ keyword, category, type }, includeInactive = false) {
   return state.db.resources
     .filter((resource) => {
       if (!includeInactive && resource.status !== "Active") return false;
-      const haystack = `${resource.title} ${resource.description} ${(resource.keywords || []).join(" ")} ${resource.authorSource}`.toLowerCase();
-      const matchesKeyword = !keyword || haystack.includes(keyword.toLowerCase());
+      const normalizedKeyword = String(keyword || "").trim().toLowerCase();
+      const categoryName = getCategoryName(resource.categoryId);
+      const haystack = `${resource.title} ${resource.description} ${categoryName} ${(resource.keywords || []).join(" ")} ${resource.authorSource}`.toLowerCase();
+      const matchesKeyword = !normalizedKeyword || haystack.includes(normalizedKeyword);
       const matchesCategory = !category || String(resource.categoryId) === String(category);
       const matchesType = !type || resource.fileType === type;
       return matchesKeyword && matchesCategory && matchesType;
@@ -189,7 +196,7 @@ function updateTopbar() {
   }
 
   topbarActions.innerHTML = `
-    <span class="pill pill--soft">${state.session.role}</span>
+    <a class="button button--soft" href="#admin/dashboard">${state.session.role}</a>
     <span class="muted">${state.session.fullName}</span>
     <button class="button button--ghost" type="button" id="logoutButton">Logout</button>
   `;
@@ -216,10 +223,9 @@ function renderLoading() {
 }
 
 function renderHomeView() {
-  const latestResources = getActiveResources()
-    .sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate))
-    .slice(0, 6);
-  const featuredCategories = state.db.categories.slice(0, 5);
+  const params = getSearchParams();
+  const hasSearch = Boolean(params.keyword || params.category || params.type);
+  const results = filterResources(params);
 
   app.innerHTML = `
     <section class="view view--search">
@@ -227,71 +233,35 @@ function renderHomeView() {
         <div class="hero__grid">
           <h1>Explore fisheries knowledge, field resources, and teaching materials in one place.</h1>
           <p>Search fisheries resources the way students naturally discover information: one large search bar, quick filters, and wide results built for easier reading.</p>
-          <form class="search-box search-box--hero" id="heroSearchForm">
+          <form class="search-box search-box--hero search-box--hero--single" id="heroSearchForm">
             <label class="field">
-              <input type="text" name="keyword" placeholder="Search fisheries topics, species, modules, manuals, videos, data...">
+              <input type="text" name="keyword" placeholder="Search fisheries resources">
             </label>
-            <label class="field">
-              <select name="category">
-                <option value="">All categories</option>
-                ${state.db.categories.map((category) => `<option value="${category.id}">${category.name}</option>`).join("")}
-              </select>
-            </label>
-            <label class="field">
-              <select name="type">
-                <option value="">All file types</option>
-                <option value="PDF">PDF</option>
-                <option value="Video">Video</option>
-                <option value="Data">Data</option>
-              </select>
-            </label>
-            <button class="button" type="submit">Search Resources</button>
           </form>
-          <div class="search-toolbar__chips">
-            ${featuredCategories.map((category) => `<button class="chip" type="button" onclick="window.LRS.searchByCategory('${category.id}')">${category.name}</button>`).join("")}
-          </div>
         </div>
       </section>
-
-      <section class="student-sections">
-        <div class="surface section-card">
-          <div class="section-heading">
+      ${hasSearch ? `
+        <section class="surface results-panel search-results-shell">
+          <div class="search-results-header">
             <div>
-              <h2>Search by Fisheries Category</h2>
-              <p>Use one click to jump into the most common learning areas.</p>
+              <h2>Search Results</h2>
+              <p>${results.length} resource${results.length === 1 ? "" : "s"} found.</p>
             </div>
-            <a class="button button--ghost" href="#search">Open Search Page</a>
+            <p class="search-meta-line">Results update from the home page search bar and category chips.</p>
           </div>
-          <div class="category-grid category-grid--search">
-            ${state.db.categories.map((category) => `
-              <article class="category-card category-card--compact">
-                <h3>${category.name}</h3>
-                <p class="muted">${category.description}</p>
-                <button class="button button--ghost" type="button" onclick="window.LRS.searchByCategory('${category.id}')">Open Resources</button>
-              </article>
-            `).join("")}
-          </div>
-        </div>
-      </section>
-
-      <section class="surface section-card">
-        <div class="section-heading">
-          <div>
-            <h2>Latest Resources</h2>
-            <p>Recently published learning materials from the School of Fisheries.</p>
-          </div>
-          <a class="button button--ghost" href="#search">See all resources</a>
-        </div>
-        <div class="resource-grid" id="latestResourcesGrid"></div>
-      </section>
+          <div class="resource-grid resource-grid--wide" id="homeSearchResultsGrid"></div>
+        </section>
+      ` : ""}
     </section>
   `;
 
-  const latestGrid = document.getElementById("latestResourcesGrid");
-  if (!latestResources.length) {
-    latestGrid.innerHTML = `<div class="empty-state"><h3>No resources yet</h3><p>Uploads from staff will appear here.</p></div>`;
-  } else {
-    latestResources.forEach((resource) => latestGrid.appendChild(createResourceCard(resource)));
+  const homeResultsGrid = document.getElementById("homeSearchResultsGrid");
+  if (homeResultsGrid) {
+    if (!results.length) {
+      homeResultsGrid.innerHTML = `<div class="empty-state"><h3>No matching resources</h3><p>Try a different keyword or choose another category chip.</p></div>`;
+    } else {
+      results.forEach((resource) => homeResultsGrid.appendChild(createResourceCard(resource)));
+    }
   }
 
   document.getElementById("heroSearchForm").addEventListener("submit", (event) => {
@@ -299,111 +269,61 @@ function renderHomeView() {
     const formData = new FormData(event.currentTarget);
     setSearchParams({
       keyword: String(formData.get("keyword") || "").trim(),
-      category: String(formData.get("category") || ""),
-      type: String(formData.get("type") || "")
+      category: "",
+      type: ""
     });
   });
 }
 
 function renderSearchView() {
-  const params = getSearchParams();
-  const results = filterResources(params);
-  const quickTypeChips = [
-    { label: "All", type: "" },
-    { label: "PDF", type: "PDF" },
-    { label: "Video", type: "Video" },
-    { label: "Data", type: "Data" }
-  ];
-
-  app.innerHTML = `
-    <section class="view view--search">
-      <div class="surface search-toolbar">
-        <form id="searchFiltersForm">
-          <div class="search-toolbar__top">
-            <label class="field">
-              <input type="text" name="keyword" placeholder="Search fisheries resources" value="${escapeAttribute(params.keyword)}">
-            </label>
-            <label class="field">
-              <select name="category">
-                <option value="">All categories</option>
-                ${state.db.categories.map((category) => `<option value="${category.id}" ${String(params.category) === String(category.id) ? "selected" : ""}>${category.name}</option>`).join("")}
-              </select>
-            </label>
-            <label class="field">
-              <select name="type">
-                <option value="">All file types</option>
-                ${["PDF", "Video", "Data"].map((type) => `<option value="${type}" ${params.type === type ? "selected" : ""}>${type}</option>`).join("")}
-              </select>
-            </label>
-            <button class="button" type="submit">Search</button>
-            <button class="button button--ghost" type="button" id="clearFiltersButton">Clear</button>
-          </div>
-        </form>
-        <div class="search-toolbar__chips">
-          ${quickTypeChips.map((chip) => `<button class="chip ${params.type === chip.type && !params.category ? "active" : ""}" type="button" data-chip-type="${chip.type}">${chip.label}</button>`).join("")}
-          ${state.db.categories.map((category) => `<button class="chip ${String(params.category) === String(category.id) ? "active" : ""}" type="button" data-chip-category="${category.id}">${category.name}</button>`).join("")}
-        </div>
-      </div>
-
-      <section class="surface results-panel search-results-shell">
-        <div class="search-results-header">
-          <div>
-            <h2>Search Results</h2>
-            <p>${results.length} resource${results.length === 1 ? "" : "s"} found.</p>
-          </div>
-          <p class="search-meta-line">Use the wide search bar and quick chips to narrow the collection faster.</p>
-        </div>
-        <div class="resource-grid resource-grid--wide" id="searchResultsGrid"></div>
-      </section>
-    </section>
-  `;
-
-  const grid = document.getElementById("searchResultsGrid");
-  if (!results.length) {
-    grid.innerHTML = `<div class="empty-state"><h3>No matching resources</h3><p>Try broadening your keyword or removing one of the filters.</p></div>`;
-  } else {
-    results.forEach((resource) => grid.appendChild(createResourceCard(resource)));
-  }
-
-  document.getElementById("searchFiltersForm").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    setSearchParams({
-      keyword: String(formData.get("keyword") || "").trim(),
-      category: String(formData.get("category") || ""),
-      type: String(formData.get("type") || "")
-    });
-  });
-
-  document.getElementById("clearFiltersButton").addEventListener("click", () => setSearchParams({ keyword: "", category: "", type: "" }));
-  document.querySelectorAll("[data-chip-type]").forEach((button) => {
-    button.addEventListener("click", () => {
-      setSearchParams({
-        keyword: params.keyword,
-        category: "",
-        type: button.dataset.chipType || ""
-      });
-    });
-  });
-  document.querySelectorAll("[data-chip-category]").forEach((button) => {
-    button.addEventListener("click", () => {
-      setSearchParams({
-        keyword: params.keyword,
-        category: button.dataset.chipCategory || "",
-        type: params.type
-      });
-    });
-  });
+  navigate("home");
 }
 
 function getViewerMarkup(resource) {
-  if (resource.fileType === "PDF" && resource.resourceUrl) {
-    return `<iframe class="viewer-frame" title="${escapeAttribute(resource.title)}" src="${resource.resourceUrl}"></iframe>`;
+  if (resource.resourceUrl) {
+    return `
+      <div class="download-panel">
+        <h3>Download Resource</h3>
+        <p>Files available in this topic.</p>
+        <ul class="download-list">
+          <li class="download-list__item">
+            <div class="download-list__content">
+              <strong>${escapeHtml(resource.title)}</strong>
+              <span>${escapeHtml(resource.fileType)} file</span>
+            </div>
+            <a class="icon-button icon-button--ghost download-list__button" href="${resource.resourceUrl}" download aria-label="Download ${escapeAttribute(resource.title)}">
+              <span aria-hidden="true">&#8595;</span>
+            </a>
+          </li>
+        </ul>
+      </div>
+    `;
   }
-  if (resource.fileType === "Video" && resource.resourceUrl) {
-    return `<video class="viewer-frame" controls src="${resource.resourceUrl}"></video>`;
+  if (resource.dataText) {
+    return `
+      <div class="download-panel">
+        <h3>Download Resource</h3>
+        <p>Files available in this topic.</p>
+        <ul class="download-list">
+          <li class="download-list__item">
+            <div class="download-list__content">
+              <strong>${escapeHtml(resource.title)}</strong>
+              <span>${escapeHtml(resource.fileType)} file</span>
+            </div>
+            <button class="icon-button icon-button--ghost download-list__button" type="button" id="downloadDataResourceButton" aria-label="Download ${escapeAttribute(resource.title)}">
+              <span aria-hidden="true">&#8595;</span>
+            </button>
+          </li>
+        </ul>
+      </div>
+    `;
   }
-  return `<pre class="data-preview">${escapeHtml(resource.dataText || "No preview available for this data resource.")}</pre>`;
+  return `
+    <div class="download-panel">
+      <h3>Download Resource</h3>
+      <p>No downloadable file is available for this resource.</p>
+    </div>
+  `;
 }
 
 async function renderResourceDetailsView(resourceId) {
@@ -439,16 +359,16 @@ async function renderResourceDetailsView(resourceId) {
               <h2>${refreshed.title}</h2>
               <p>${refreshed.description}</p>
             </div>
+            <div class="viewer-actions">
+              <a class="button" href="#search">Back to Results</a>
+              ${refreshed.resourceUrl || refreshed.dataText ? `<a class="button button--ghost" href="${refreshed.resourceUrl || "#"}" ${refreshed.resourceUrl ? "download" : 'id="downloadDataResourceLink"'}>Download Resource</a>` : ""}
+            </div>
           </div>
           <div class="detail-meta">
             <span>${refreshed.fileType}</span>
             <span>${formatDate(refreshed.uploadDate)}</span>
             <span>${refreshed.views} views</span>
             <span>${refreshed.authorSource}</span>
-          </div>
-          <div class="viewer-actions">
-            <a class="button" href="#search">Back to Results</a>
-            ${refreshed.resourceUrl ? `<a class="button button--ghost" href="${refreshed.resourceUrl}" target="_blank" rel="noopener noreferrer">Open in New Tab</a>` : ""}
           </div>
           <div>${getViewerMarkup(refreshed)}</div>
         </div>
@@ -482,6 +402,27 @@ async function renderResourceDetailsView(resourceId) {
       </div>
     </section>
   `;
+
+  const downloadDataResource = () => {
+    if (!refreshed.dataText) return;
+    const extension = refreshed.fileType === "Data" ? "txt" : refreshed.fileType.toLowerCase();
+    const safeTitle = refreshed.title.replace(/[^a-z0-9-_]+/gi, "-").replace(/^-+|-+$/g, "") || "resource";
+    const blob = new Blob([refreshed.dataText], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${safeTitle}.${extension}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  document.getElementById("downloadDataResourceButton")?.addEventListener("click", downloadDataResource);
+  document.getElementById("downloadDataResourceLink")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    downloadDataResource();
+  });
 }
 
 function getModuleTitle(module) {
@@ -500,7 +441,7 @@ function getModuleDescription(module) {
     dashboard: "Overview of resources, recent uploads, and top-performing learning materials.",
     resources: "Review, edit, approve, activate, or deactivate fisheries learning resources.",
     categories: "Maintain categories used in student browsing and filtering.",
-    upload: "Encoder uploads are submitted for review before administrators approve them for students.",
+    upload: "Upload new learning resources and save them directly to the system.",
     reports: "View resource summaries by type, category, and publication status.",
     users: "Manage encoder and administrator accounts."
   }[module] || "";
@@ -517,7 +458,6 @@ function renderLoginView() {
           <label class="field"><input type="password" name="password" placeholder="Password" required></label>
           <button class="button" type="submit">Login</button>
         </form>
-        <p class="helper-text">Default seeded accounts: <strong>admin / admin123</strong> and <strong>encoder / encode123</strong></p>
       </div>
     </section>
   `;
@@ -537,9 +477,16 @@ function renderLoginView() {
 }
 
 function renderResourcesTable(resources) {
-  const canApproveResources = isAdministrator();
   return `
-    <div class="table-wrap">
+    <section class="list-card category-management-card">
+      <div class="section-heading category-management-card__header">
+        <div>
+          <h3>Resource List</h3>
+          <p>Manage uploaded learning resources and add new materials from one place.</p>
+        </div>
+        <button class="button" type="button" id="openResourceModalButton">Add New Resource</button>
+      </div>
+      <div class="table-wrap">
       <table>
         <thead>
           <tr>
@@ -576,8 +523,22 @@ function renderResourcesTable(resources) {
           `).join("")}
         </tbody>
       </table>
+      </div>
+    </section>
+    <div class="modal-backdrop" id="resourceModal" hidden>
+      <div class="modal-dialog modal-dialog--wide" role="dialog" aria-modal="true" aria-labelledby="resourceModalTitle">
+        <div class="modal-card">
+          <div class="section-heading modal-card__header">
+            <div>
+              <h3 id="resourceModalTitle">Add New Resource</h3>
+              <p id="resourceModalSubtitle">Upload a new learning resource and save it directly from this module.</p>
+            </div>
+            <button class="icon-button icon-button--ghost" type="button" id="closeResourceModalButton" aria-label="Close resource modal">X</button>
+          </div>
+          <div id="resourceModalMount"></div>
+        </div>
+      </div>
     </div>
-    <div id="resourceEditorMount"></div>
   `;
 }
 
@@ -662,10 +623,11 @@ function renderCategoriesModule() {
   `;
 }
 
-function renderUploadModule(resource = null) {
+function renderUploadModule(resource = null, options = {}) {
   const isEdit = Boolean(resource);
-  const resourceStatus = resource?.status || "Pending Review";
+  const resourceStatus = resource?.status || "Active";
   const canEditStatus = isAdministrator();
+  const wrapperClass = options.modal ? "resource-form-shell resource-form-shell--modal" : "form-card";
   const statusField = canEditStatus
     ? `
           <label class="field">
@@ -681,9 +643,9 @@ function renderUploadModule(resource = null) {
           </label>
       `;
   return `
-    <section class="form-card">
+    <section class="${wrapperClass}">
       <h3>${isEdit ? "Edit Resource" : "Upload New Resource"}</h3>
-      <p class="upload-note">${canEditStatus ? "Use the review status to approve, hold, or hide a resource after checking its details." : "New uploads are submitted as Pending Review. An administrator will approve them after checking the details."}</p>
+      <p class="upload-note">${canEditStatus ? "Set the resource status before saving so it appears the way you intend." : "New uploads are saved as Active immediately."}</p>
       <form id="resourceForm" class="resource-form-grid" enctype="multipart/form-data">
         <input type="hidden" name="id" value="${resource ? resource.id : ""}">
         <div class="report-grid">
@@ -717,7 +679,7 @@ function renderUploadModule(resource = null) {
         <label class="field"><input type="file" name="uploadFile" accept=".pdf,.mp4,.mov,.csv,.json,.txt"></label>
         <div class="inline-actions">
           <button class="button" type="submit">${isEdit ? "Update Resource" : "Save Resource"}</button>
-          ${isEdit ? `<button class="button button--ghost" type="button" id="cancelEditButton">Cancel</button>` : ""}
+          <button class="button button--ghost" type="button" id="cancelEditButton">Cancel</button>
         </div>
       </form>
     </section>
@@ -821,6 +783,47 @@ function renderUsersModule() {
 }
 
 function attachResourceTableEvents() {
+  const modal = document.getElementById("resourceModal");
+  const mount = document.getElementById("resourceModalMount");
+  const title = document.getElementById("resourceModalTitle");
+  const subtitle = document.getElementById("resourceModalSubtitle");
+  const openButton = document.getElementById("openResourceModalButton");
+  const closeButton = document.getElementById("closeResourceModalButton");
+
+  const closeModal = () => {
+    if (modal) modal.hidden = true;
+  };
+
+  const openModal = (resource = null) => {
+    if (!modal || !mount || !title || !subtitle) return;
+    const isEdit = Boolean(resource);
+    title.textContent = isEdit ? "Edit Resource" : "Add New Resource";
+    subtitle.textContent = isEdit
+      ? "Update the selected learning resource."
+      : "Upload a new learning resource and save it directly from this module.";
+    mount.innerHTML = renderUploadModule(resource, { modal: true });
+    modal.hidden = false;
+    attachUploadEvents(closeModal);
+    mount.querySelector('[name="title"]')?.focus();
+  };
+
+  openButton?.addEventListener("click", () => openModal());
+  closeButton?.addEventListener("click", closeModal);
+  modal?.addEventListener("click", (event) => {
+    if (event.target === modal) closeModal();
+  });
+
+  if (window.LRSResourceModalEscapeHandler) {
+    document.removeEventListener("keydown", window.LRSResourceModalEscapeHandler);
+  }
+  const handleEscape = (event) => {
+    if (event.key === "Escape" && modal && !modal.hidden) {
+      closeModal();
+    }
+  };
+  window.LRSResourceModalEscapeHandler = handleEscape;
+  document.addEventListener("keydown", handleEscape);
+
   document.querySelectorAll("[data-toggle-resource]").forEach((button) => {
     const resource = state.db.resources.find((item) => String(item.id) === String(button.dataset.toggleResource));
     if (resource) {
@@ -868,10 +871,8 @@ function attachResourceTableEvents() {
   document.querySelectorAll("[data-edit-resource]").forEach((button) => {
     button.addEventListener("click", () => {
       const resource = state.db.resources.find((item) => String(item.id) === String(button.dataset.editResource));
-      const mount = document.getElementById("resourceEditorMount");
-      mount.innerHTML = renderUploadModule(resource);
-      attachUploadEvents();
-      mount.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (!resource) return;
+      openModal(resource);
     });
   });
 }
@@ -995,7 +996,7 @@ function attachCategoryEvents() {
   });
 }
 
-function attachUploadEvents() {
+function attachUploadEvents(onComplete = null) {
   const form = document.getElementById("resourceForm");
   if (!form) return;
 
@@ -1006,8 +1007,9 @@ function attachUploadEvents() {
       if (form.querySelector('[name="id"]').value) {
         showToast("Resource updated.");
       } else {
-        showToast(isAdministrator() ? "Resource uploaded." : "Resource submitted for review.");
+        showToast("Resource uploaded.");
       }
+      if (onComplete) onComplete();
       render();
     } catch (error) {
       showToast(error.message);
@@ -1016,7 +1018,13 @@ function attachUploadEvents() {
 
   const cancelButton = document.getElementById("cancelEditButton");
   if (cancelButton) {
-    cancelButton.addEventListener("click", () => render());
+    cancelButton.addEventListener("click", () => {
+      if (onComplete) {
+        onComplete();
+        return;
+      }
+      render();
+    });
   }
 }
 
@@ -1109,11 +1117,33 @@ function renderAdminView() {
     return;
   }
 
-  const module = state.route.id || "dashboard";
+  const adminModules = isAdministrator()
+    ? [
+        ["dashboard", "Dashboard"],
+        ["resources", "Learning Resource Management"],
+        ["categories", "Category Management"],
+        ["upload", "Upload Files"],
+        ["reports", "Reports"],
+        ["users", "User Management"]
+      ]
+    : [
+        ["dashboard", "Dashboard"],
+        ["resources", "Learning Resource Management"],
+        ["categories", "Category Management"],
+        ["upload", "Upload Files"]
+      ];
+  const allowedModules = new Set(adminModules.map(([key]) => key));
+  const module = allowedModules.has(state.route.id) ? state.route.id : "dashboard";
+
+  if (state.route.id && !allowedModules.has(state.route.id)) {
+    navigate("admin/dashboard");
+    return;
+  }
+
   const resources = [...state.db.resources].sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate));
   const mostViewed = [...state.db.resources].sort((a, b) => b.views - a.views).slice(0, 5);
   const recentUploads = resources.slice(0, 5);
-  const pendingCount = state.db.resources.filter((item) => item.status === "Pending Review").length;
+  const latestResourcesCount = state.db.resources.filter((item) => item.uploadDate === getLocalDateInputValue()).length;
   const activeCount = state.db.resources.filter((item) => item.status === "Active").length;
   const inactiveCount = state.db.resources.filter((item) => item.status === "Inactive").length;
 
@@ -1123,17 +1153,10 @@ function renderAdminView() {
         <aside class="admin-sidebar">
           <div>
             <h2>Admin Page</h2>
-            <p class="muted">Manage learning resources, categories, reports, and users.</p>
+            <p class="muted">${isAdministrator() ? "Manage learning resources, categories, reports, and users." : "Manage learning resources, categories, and uploads."}</p>
           </div>
           <nav class="admin-nav" id="adminNav">
-            ${[
-              ["dashboard", "Dashboard"],
-              ["resources", "Learning Resource Management"],
-              ["categories", "Category Management"],
-              ["upload", "Upload Files"],
-              ["reports", "Reports"],
-              ["users", "User Management"]
-            ].map(([key, label]) => `<button type="button" class="${module === key ? "active" : ""}" data-module="${key}">${label}</button>`).join("")}
+            ${adminModules.map(([key, label]) => `<button type="button" class="${module === key ? "active" : ""}" data-module="${key}">${label}</button>`).join("")}
           </nav>
           <div class="admin-sidebar__footer">
             <span class="pill">${state.session.role}</span>
@@ -1162,7 +1185,7 @@ function renderAdminView() {
       moduleContent.innerHTML = `
         <div class="stats-grid">
           <article class="stat-card"><h3>Total Resources</h3><strong>${state.db.resources.length}</strong><span class="muted">All uploaded learning items</span></article>
-          <article class="stat-card"><h3>Pending Review</h3><strong>${pendingCount}</strong><span class="muted">Waiting for administrator approval</span></article>
+          <article class="stat-card"><h3>Latest Resources</h3><strong>${latestResourcesCount}</strong><span class="muted">Resources uploaded today</span></article>
           <article class="stat-card"><h3>Active Resources</h3><strong>${activeCount}</strong><span class="muted">Visible on the student page</span></article>
           <article class="stat-card"><h3>Inactive Resources</h3><strong>${inactiveCount}</strong><span class="muted">Hidden after review or archival</span></article>
         </div>

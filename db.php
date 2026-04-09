@@ -84,7 +84,7 @@ function initialize_schema(PDO $pdo): void
             keywords_json LONGTEXT NOT NULL,
             author_source VARCHAR(255) NOT NULL,
             upload_date DATE NOT NULL,
-            status ENUM("Pending Review", "Active", "Inactive") NOT NULL DEFAULT "Pending Review",
+            status ENUM("Pending Review", "Active", "Inactive") NOT NULL DEFAULT "Active",
             views INT UNSIGNED NOT NULL DEFAULT 0,
             source_mode ENUM("url", "upload", "text") NOT NULL DEFAULT "url",
             resource_url TEXT NULL,
@@ -99,7 +99,7 @@ function initialize_schema(PDO $pdo): void
 
     $pdo->exec(
         'ALTER TABLE resources
-         MODIFY COLUMN status ENUM("Pending Review", "Active", "Inactive") NOT NULL DEFAULT "Pending Review"'
+         MODIFY COLUMN status ENUM("Pending Review", "Active", "Inactive") NOT NULL DEFAULT "Active"'
     );
 }
 
