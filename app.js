@@ -53,6 +53,14 @@ function getLocalDateInputValue(date = new Date()) {
   return offsetDate.toISOString().slice(0, 10);
 }
 
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / (1024 ** exponent);
+  return `${value >= 10 || exponent === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[exponent]}`;
+}
+
 function showToast(message) {
   const existing = document.querySelector(".toast");
   if (existing) existing.remove();
@@ -279,41 +287,39 @@ function renderSearchView() {
   navigate("home");
 }
 
+function buildResourceFiles(resource) {
+  return Array.isArray(resource.files) && resource.files.length
+    ? resource.files
+    : [{
+        fileType: resource.fileType,
+        sourceMode: resource.sourceMode,
+        resourceUrl: resource.resourceUrl,
+        dataText: resource.dataText,
+        storedFilename: null,
+        originalFilename: resource.originalFilename || resource.title,
+        mimeType: null
+      }].filter((file) => file.resourceUrl || file.dataText);
+}
+
 function getViewerMarkup(resource) {
-  if (resource.resourceUrl) {
+  const files = buildResourceFiles(resource);
+  if (files.length) {
     return `
       <div class="download-panel">
         <h3>Download Resource</h3>
         <p>Files available in this topic.</p>
         <ul class="download-list">
-          <li class="download-list__item">
-            <div class="download-list__content">
-              <strong>${escapeHtml(resource.title)}</strong>
-              <span>${escapeHtml(resource.fileType)} file</span>
-            </div>
-            <a class="icon-button icon-button--ghost download-list__button" href="${resource.resourceUrl}" download aria-label="Download ${escapeAttribute(resource.title)}">
-              <span aria-hidden="true">&#8595;</span>
-            </a>
-          </li>
-        </ul>
-      </div>
-    `;
-  }
-  if (resource.dataText) {
-    return `
-      <div class="download-panel">
-        <h3>Download Resource</h3>
-        <p>Files available in this topic.</p>
-        <ul class="download-list">
-          <li class="download-list__item">
-            <div class="download-list__content">
-              <strong>${escapeHtml(resource.title)}</strong>
-              <span>${escapeHtml(resource.fileType)} file</span>
-            </div>
-            <button class="icon-button icon-button--ghost download-list__button" type="button" id="downloadDataResourceButton" aria-label="Download ${escapeAttribute(resource.title)}">
-              <span aria-hidden="true">&#8595;</span>
-            </button>
-          </li>
+          ${files.map((file, index) => `
+            <li class="download-list__item">
+              <div class="download-list__content">
+                <strong>${escapeHtml(file.originalFilename || `${resource.title}-${index + 1}`)}</strong>
+                <span>${escapeHtml(file.fileType || resource.fileType)} file</span>
+              </div>
+              ${file.resourceUrl
+                ? `<a class="icon-button icon-button--ghost download-list__button" href="${file.resourceUrl}" download aria-label="Download ${escapeAttribute(file.originalFilename || resource.title)}"><span aria-hidden="true">&#8595;</span></a>`
+                : `<button class="icon-button icon-button--ghost download-list__button" type="button" data-download-file="${index}" aria-label="Download ${escapeAttribute(file.originalFilename || resource.title)}"><span aria-hidden="true">&#8595;</span></button>`}
+            </li>
+          `).join("")}
         </ul>
       </div>
     `;
@@ -361,7 +367,7 @@ async function renderResourceDetailsView(resourceId) {
             </div>
             <div class="viewer-actions">
               <a class="button" href="#search">Back to Results</a>
-              ${refreshed.resourceUrl || refreshed.dataText ? `<a class="button button--ghost" href="${refreshed.resourceUrl || "#"}" ${refreshed.resourceUrl ? "download" : 'id="downloadDataResourceLink"'}>Download Resource</a>` : ""}
+              ${buildResourceFiles(refreshed).length ? `<button class="button button--ghost" type="button" id="downloadAllResourceFilesButton">Download Files</button>` : ""}
             </div>
           </div>
           <div class="detail-meta">
@@ -403,25 +409,40 @@ async function renderResourceDetailsView(resourceId) {
     </section>
   `;
 
-  const downloadDataResource = () => {
-    if (!refreshed.dataText) return;
-    const extension = refreshed.fileType === "Data" ? "txt" : refreshed.fileType.toLowerCase();
-    const safeTitle = refreshed.title.replace(/[^a-z0-9-_]+/gi, "-").replace(/^-+|-+$/g, "") || "resource";
-    const blob = new Blob([refreshed.dataText], { type: "text/plain;charset=utf-8" });
+  const resourceFiles = buildResourceFiles(refreshed);
+  const downloadFile = (file) => {
+    if (!file?.dataText) return;
+    const extension = (file.fileType || refreshed.fileType) === "Data" ? "txt" : String(file.fileType || refreshed.fileType).toLowerCase();
+    const safeTitle = String(file.originalFilename || refreshed.title).replace(/[^a-z0-9-_.]+/gi, "-").replace(/^-+|-+$/g, "") || "resource";
+    const blob = new Blob([file.dataText], { type: file.mimeType || "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${safeTitle}.${extension}`;
+    link.download = safeTitle.includes(".") ? safeTitle : `${safeTitle}.${extension}`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
-  document.getElementById("downloadDataResourceButton")?.addEventListener("click", downloadDataResource);
-  document.getElementById("downloadDataResourceLink")?.addEventListener("click", (event) => {
-    event.preventDefault();
-    downloadDataResource();
+  document.querySelectorAll("[data-download-file]").forEach((button) => {
+    button.addEventListener("click", () => {
+      downloadFile(resourceFiles[Number(button.dataset.downloadFile)]);
+    });
+  });
+  document.getElementById("downloadAllResourceFilesButton")?.addEventListener("click", () => {
+    resourceFiles.forEach((file, index) => {
+      if (file.resourceUrl) {
+        const link = document.createElement("a");
+        link.href = file.resourceUrl;
+        link.download = file.originalFilename || `${refreshed.title}-${index + 1}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        return;
+      }
+      downloadFile(file);
+    });
   });
 }
 
@@ -430,7 +451,6 @@ function getModuleTitle(module) {
     dashboard: "Dashboard",
     resources: "Learning Resource Management",
     categories: "Category Management",
-    upload: "Upload Files",
     reports: "Reports",
     users: "User Management"
   }[module] || "Dashboard";
@@ -441,7 +461,6 @@ function getModuleDescription(module) {
     dashboard: "Overview of resources, recent uploads, and top-performing learning materials.",
     resources: "Review, edit, approve, activate, or deactivate fisheries learning resources.",
     categories: "Maintain categories used in student browsing and filtering.",
-    upload: "Upload new learning resources and save them directly to the system.",
     reports: "View resource summaries by type, category, and publication status.",
     users: "Manage encoder and administrator accounts."
   }[module] || "";
@@ -492,7 +511,6 @@ function renderResourcesTable(resources) {
           <tr>
             <th>Title</th>
             <th>Category</th>
-            <th>Type</th>
             <th>Upload Date</th>
             <th>Status</th>
             <th>Views</th>
@@ -504,7 +522,6 @@ function renderResourcesTable(resources) {
             <tr>
               <td><strong>${resource.title}</strong><br><span class="muted">${resource.authorSource}</span></td>
               <td>${getCategoryName(resource.categoryId)}</td>
-              <td>${resource.fileType}</td>
               <td>${formatDate(resource.uploadDate)}</td>
               <td><span class="pill ${getResourceStatusClass(resource.status)}">${resource.status}</span></td>
               <td>${resource.views}</td>
@@ -533,7 +550,6 @@ function renderResourcesTable(resources) {
               <h3 id="resourceModalTitle">Add New Resource</h3>
               <p id="resourceModalSubtitle">Upload a new learning resource and save it directly from this module.</p>
             </div>
-            <button class="icon-button icon-button--ghost" type="button" id="closeResourceModalButton" aria-label="Close resource modal">X</button>
           </div>
           <div id="resourceModalMount"></div>
         </div>
@@ -582,7 +598,6 @@ function renderCategoriesModule() {
               <h3 id="categoryModalTitle">Add Category</h3>
               <p id="categoryModalSubtitle">Create a new category for student browsing and admin organization.</p>
             </div>
-            <button class="icon-button icon-button--ghost" type="button" id="closeCategoryModalButton" aria-label="Close add category modal">✕</button>
           </div>
           <form id="categoryForm" class="modal-form">
             <input type="hidden" name="id" value="">
@@ -628,6 +643,28 @@ function renderUploadModule(resource = null, options = {}) {
   const resourceStatus = resource?.status || "Active";
   const canEditStatus = isAdministrator();
   const wrapperClass = options.modal ? "resource-form-shell resource-form-shell--modal" : "form-card";
+  const resourceFiles = Array.isArray(resource?.files) ? resource.files : [];
+  const hasMultipleFiles = resourceFiles.length > 1;
+  const resourceUrlValue = hasMultipleFiles ? "" : (resource?.resourceUrl || "");
+  const dataTextValue = hasMultipleFiles ? "" : (resource?.dataText || "");
+  const existingFilesCard = isEdit && resourceFiles.length
+    ? `
+        <section class="existing-files-card">
+          <div class="existing-files-card__header">
+            <strong>Uploaded Files</strong>
+            <span>${resourceFiles.length} file${resourceFiles.length === 1 ? "" : "s"}</span>
+          </div>
+          <div class="existing-files-card__list">
+            ${resourceFiles.map((file, index) => `
+              <article class="existing-files-card__item">
+                <strong>${escapeHtml(file.originalFilename || `${resource?.title || "Resource"}-${index + 1}`)}</strong>
+                <span>${escapeHtml(file.fileType || resource?.fileType || "File")}</span>
+              </article>
+            `).join("")}
+          </div>
+        </section>
+      `
+    : "";
   const statusField = canEditStatus
     ? `
           <label class="field">
@@ -644,8 +681,6 @@ function renderUploadModule(resource = null, options = {}) {
       `;
   return `
     <section class="${wrapperClass}">
-      <h3>${isEdit ? "Edit Resource" : "Upload New Resource"}</h3>
-      <p class="upload-note">${canEditStatus ? "Set the resource status before saving so it appears the way you intend." : "New uploads are saved as Active immediately."}</p>
       <form id="resourceForm" class="resource-form-grid" enctype="multipart/form-data">
         <input type="hidden" name="id" value="${resource ? resource.id : ""}">
         <div class="report-grid">
@@ -660,24 +695,23 @@ function renderUploadModule(resource = null, options = {}) {
               ${state.db.categories.map((category) => `<option value="${category.id}" ${String(resource?.categoryId || "") === String(category.id) ? "selected" : ""}>${category.name}</option>`).join("")}
             </select>
           </label>
-          <label class="field">
-            <select name="fileType" required>
-              <option value="">Select file type</option>
-              ${["PDF", "Video", "Data"].map((type) => `<option value="${type}" ${resource?.fileType === type ? "selected" : ""}>${type}</option>`).join("")}
-            </select>
-          </label>
-        </div>
-        <div class="report-grid">
-          <label class="field"><input type="text" name="keywords" placeholder="Keywords separated by commas" value="${escapeAttribute((resource?.keywords || []).join(", "))}" required></label>
           <label class="field"><input type="date" name="uploadDate" value="${resource?.uploadDate || new Date().toISOString().slice(0, 10)}" required></label>
         </div>
         <div class="report-grid">
           ${statusField}
-          <label class="field"><input type="url" name="resourceUrl" placeholder="External file URL (optional)" value="${escapeAttribute(resource?.resourceUrl || "")}"></label>
+          <label class="field"><input type="url" name="resourceUrl" placeholder="External file URL (optional)" value="${escapeAttribute(resourceUrlValue)}"></label>
         </div>
-        <label class="field"><textarea name="dataText" placeholder="For data resources, paste tabular or JSON content here">${escapeHtml(resource?.dataText || "")}</textarea></label>
-        <label class="field"><input type="file" name="uploadFile" accept=".pdf,.mp4,.mov,.csv,.json,.txt"></label>
-        <div class="inline-actions">
+        <label class="field"><textarea name="dataText" placeholder="For data resources, paste tabular or JSON content here">${escapeHtml(dataTextValue)}</textarea></label>
+        <div class="field field--file-upload">
+          <input class="file-upload-input" type="file" name="uploadFile[]" id="resourceUploadInput" accept=".pdf,.mp4,.mov,.csv,.json,.txt,.jpeg,.jpg" multiple>
+          <label class="upload-file-summary" for="resourceUploadInput" id="resourceUploadSummary" aria-live="polite">
+            <span class="upload-file-summary__button">Choose Files</span>
+            <span class="upload-file-summary__placeholder" id="resourceUploadPlaceholder">No files chosen</span>
+            <span class="upload-file-summary__list" id="resourceUploadList" hidden></span>
+          </label>
+        </div>
+        ${existingFilesCard}
+        <div class="inline-actions modal-card__actions">
           <button class="button" type="submit">${isEdit ? "Update Resource" : "Save Resource"}</button>
           <button class="button button--ghost" type="button" id="cancelEditButton">Cancel</button>
         </div>
@@ -691,7 +725,7 @@ function renderReportsModule() {
     name: category.name,
     total: state.db.resources.filter((resource) => Number(resource.categoryId) === Number(category.id)).length
   }));
-  const typeReport = ["PDF", "Video", "Data"].map((type) => ({
+  const typeReport = ["PDF", "Video", "Data", "Image"].map((type) => ({
     name: type,
     total: state.db.resources.filter((resource) => resource.fileType === type).length
   }));
@@ -758,7 +792,6 @@ function renderUsersModule() {
                 <h3 id="userModalTitle">Add User</h3>
                 <p>Create a new encoder or administrator account.</p>
               </div>
-              <button class="icon-button icon-button--ghost" type="button" id="closeUserModalButton" aria-label="Close add user modal">✕</button>
             </div>
             <form id="userForm" class="modal-form">
               <label class="field"><input type="text" name="fullName" placeholder="Full name" required></label>
@@ -809,9 +842,6 @@ function attachResourceTableEvents() {
 
   openButton?.addEventListener("click", () => openModal());
   closeButton?.addEventListener("click", closeModal);
-  modal?.addEventListener("click", (event) => {
-    if (event.target === modal) closeModal();
-  });
 
   if (window.LRSResourceModalEscapeHandler) {
     document.removeEventListener("keydown", window.LRSResourceModalEscapeHandler);
@@ -922,16 +952,10 @@ function attachCategoryEvents() {
   };
 
   openButton.addEventListener("click", openModal);
-  closeButton.addEventListener("click", closeModal);
+  closeButton?.addEventListener("click", closeModal);
   cancelButton.addEventListener("click", closeModal);
   closeViewButton.addEventListener("click", closeViewModal);
   closeViewFooterButton.addEventListener("click", closeViewModal);
-  modal.addEventListener("click", (event) => {
-    if (event.target === modal) closeModal();
-  });
-  viewModal.addEventListener("click", (event) => {
-    if (event.target === viewModal) closeViewModal();
-  });
 
   if (window.LRSCategoryModalEscapeHandler) {
     document.removeEventListener("keydown", window.LRSCategoryModalEscapeHandler);
@@ -999,17 +1023,112 @@ function attachCategoryEvents() {
 function attachUploadEvents(onComplete = null) {
   const form = document.getElementById("resourceForm");
   if (!form) return;
+  const uploadInput = form.querySelector("#resourceUploadInput");
+  const uploadSummary = form.querySelector("#resourceUploadSummary");
+  const uploadPlaceholder = form.querySelector("#resourceUploadPlaceholder");
+  const uploadList = form.querySelector("#resourceUploadList");
+  const allowedUploadExtensions = new Set(["pdf", "mp4", "mov", "csv", "json", "txt", "jpeg", "jpg"]);
+  const maxUploadBytes = 256 * 1024 * 1024;
+  let selectedFiles = Array.from(uploadInput?.files || []);
+
+  const updateUploadSummary = () => {
+    if (!uploadSummary || !uploadInput || !uploadPlaceholder || !uploadList) return;
+    const files = selectedFiles;
+    if (!files.length) {
+      uploadPlaceholder.hidden = false;
+      uploadPlaceholder.textContent = "No files chosen";
+      uploadList.hidden = true;
+      uploadList.innerHTML = "";
+      uploadSummary.classList.remove("has-files");
+      return;
+    }
+    uploadPlaceholder.hidden = true;
+    uploadList.hidden = false;
+    uploadList.innerHTML = files.map((file, index) => `
+      <span class="upload-file-chip">
+        <span class="upload-file-chip__name">${escapeHtml(file.name)}</span>
+        <button class="upload-file-chip__remove" type="button" data-remove-upload="${index}" aria-label="Remove ${escapeAttribute(file.name)}">x</button>
+      </span>
+    `).join("");
+    uploadSummary.classList.add("has-files");
+  };
+
+  const syncInputFiles = () => {
+    if (!uploadInput) return;
+    const dataTransfer = new DataTransfer();
+    selectedFiles.forEach((file) => dataTransfer.items.add(file));
+    uploadInput.files = dataTransfer.files;
+  };
+
+  updateUploadSummary();
+  uploadInput?.addEventListener("change", () => {
+    const incomingFiles = Array.from(uploadInput.files || []);
+    if (!incomingFiles.length) return;
+    const validFiles = [];
+    const rejectedFiles = [];
+
+    incomingFiles.forEach((file) => {
+      const extension = file.name.includes(".") ? file.name.split(".").pop().toLowerCase() : "";
+      if (allowedUploadExtensions.has(extension)) {
+        validFiles.push(file);
+      } else {
+        rejectedFiles.push(file.name);
+      }
+    });
+
+    if (rejectedFiles.length) {
+      showToast(`Unsupported file type: ${rejectedFiles.join(", ")}. Use PDF, MP4, MOV, CSV, JSON, TXT, JPG, or JPEG.`);
+    }
+
+    if (!validFiles.length) {
+      syncInputFiles();
+      updateUploadSummary();
+      return;
+    }
+
+    const nextFiles = [...selectedFiles, ...validFiles];
+    const totalBytes = nextFiles.reduce((sum, file) => sum + (file.size || 0), 0);
+    if (totalBytes > maxUploadBytes) {
+      showToast(`Selected files are too large (${formatBytes(totalBytes)}). Maximum total upload size is ${formatBytes(maxUploadBytes)}.`);
+      syncInputFiles();
+      updateUploadSummary();
+      return;
+    }
+
+    selectedFiles = nextFiles;
+    syncInputFiles();
+    updateUploadSummary();
+  });
+  uploadList?.addEventListener("click", (event) => {
+    const removeButton = event.target.closest("[data-remove-upload]");
+    if (!removeButton) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const index = Number(removeButton.dataset.removeUpload);
+    selectedFiles = selectedFiles.filter((_, fileIndex) => fileIndex !== index);
+    syncInputFiles();
+    updateUploadSummary();
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const totalBytes = selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0);
+    if (totalBytes > maxUploadBytes) {
+      showToast(`Selected files are too large (${formatBytes(totalBytes)}). Maximum total upload size is ${formatBytes(maxUploadBytes)}.`);
+      return;
+    }
+    const payload = new FormData(form);
+    const isEdit = Boolean(form.querySelector('[name="id"]').value);
+    if (onComplete) {
+      onComplete();
+    }
     try {
-      await apiRequest("save_resource", { method: "POST", body: new FormData(form) });
-      if (form.querySelector('[name="id"]').value) {
+      await apiRequest("save_resource", { method: "POST", body: payload });
+      if (isEdit) {
         showToast("Resource updated.");
       } else {
         showToast("Resource uploaded.");
       }
-      if (onComplete) onComplete();
       render();
     } catch (error) {
       showToast(error.message);
@@ -1035,7 +1154,7 @@ function attachUserEvents() {
   const closeUserModalButton = document.getElementById("closeUserModalButton");
   const cancelUserModalButton = document.getElementById("cancelUserModalButton");
 
-  if (userModal && openUserModalButton && closeUserModalButton && cancelUserModalButton && userForm) {
+  if (userModal && openUserModalButton && cancelUserModalButton && userForm) {
     const closeUserModal = () => {
       userModal.hidden = true;
     };
@@ -1047,11 +1166,8 @@ function attachUserEvents() {
     };
 
     openUserModalButton.addEventListener("click", openUserModal);
-    closeUserModalButton.addEventListener("click", closeUserModal);
+    closeUserModalButton?.addEventListener("click", closeUserModal);
     cancelUserModalButton.addEventListener("click", closeUserModal);
-    userModal.addEventListener("click", (event) => {
-      if (event.target === userModal) closeUserModal();
-    });
 
     if (window.LRSUserModalEscapeHandler) {
       document.removeEventListener("keydown", window.LRSUserModalEscapeHandler);
@@ -1122,15 +1238,13 @@ function renderAdminView() {
         ["dashboard", "Dashboard"],
         ["resources", "Learning Resource Management"],
         ["categories", "Category Management"],
-        ["upload", "Upload Files"],
         ["reports", "Reports"],
         ["users", "User Management"]
       ]
     : [
         ["dashboard", "Dashboard"],
         ["resources", "Learning Resource Management"],
-        ["categories", "Category Management"],
-        ["upload", "Upload Files"]
+        ["categories", "Category Management"]
       ];
   const allowedModules = new Set(adminModules.map(([key]) => key));
   const module = allowedModules.has(state.route.id) ? state.route.id : "dashboard";
@@ -1143,7 +1257,7 @@ function renderAdminView() {
   const resources = [...state.db.resources].sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate));
   const mostViewed = [...state.db.resources].sort((a, b) => b.views - a.views).slice(0, 5);
   const recentUploads = resources.slice(0, 5);
-  const latestResourcesCount = state.db.resources.filter((item) => item.uploadDate === getLocalDateInputValue()).length;
+  const pendingResourcesCount = state.db.resources.filter((item) => item.status === "Pending Review").length;
   const activeCount = state.db.resources.filter((item) => item.status === "Active").length;
   const inactiveCount = state.db.resources.filter((item) => item.status === "Inactive").length;
 
@@ -1153,15 +1267,11 @@ function renderAdminView() {
         <aside class="admin-sidebar">
           <div>
             <h2>Admin Page</h2>
-            <p class="muted">${isAdministrator() ? "Manage learning resources, categories, reports, and users." : "Manage learning resources, categories, and uploads."}</p>
+            <p class="muted">${isAdministrator() ? "Manage learning resources, categories, reports, and users." : "Manage learning resources and categories."}</p>
           </div>
           <nav class="admin-nav" id="adminNav">
             ${adminModules.map(([key, label]) => `<button type="button" class="${module === key ? "active" : ""}" data-module="${key}">${label}</button>`).join("")}
           </nav>
-          <div class="admin-sidebar__footer">
-            <span class="pill">${state.session.role}</span>
-            <span class="muted">${state.session.fullName}</span>
-          </div>
         </aside>
 
         <div class="admin-main">
@@ -1185,7 +1295,7 @@ function renderAdminView() {
       moduleContent.innerHTML = `
         <div class="stats-grid">
           <article class="stat-card"><h3>Total Resources</h3><strong>${state.db.resources.length}</strong><span class="muted">All uploaded learning items</span></article>
-          <article class="stat-card"><h3>Latest Resources</h3><strong>${latestResourcesCount}</strong><span class="muted">Resources uploaded today</span></article>
+          <article class="stat-card"><h3>Pending Resources</h3><strong>${pendingResourcesCount}</strong><span class="muted">Resources awaiting review</span></article>
           <article class="stat-card"><h3>Active Resources</h3><strong>${activeCount}</strong><span class="muted">Visible on the student page</span></article>
           <article class="stat-card"><h3>Inactive Resources</h3><strong>${inactiveCount}</strong><span class="muted">Hidden after review or archival</span></article>
         </div>
@@ -1208,10 +1318,6 @@ function renderAdminView() {
     case "categories":
       moduleContent.innerHTML = renderCategoriesModule();
       attachCategoryEvents();
-      break;
-    case "upload":
-      moduleContent.innerHTML = renderUploadModule();
-      attachUploadEvents();
       break;
     case "reports":
       moduleContent.innerHTML = renderReportsModule();

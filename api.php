@@ -9,6 +9,10 @@ require __DIR__ . '/db.php';
 header('Content-Type: application/json; charset=utf-8');
 
 try {
+    if (request_exceeds_post_max_size()) {
+        error_response('Uploaded files are too large. Maximum total upload size is ' . readable_bytes(post_max_size_bytes()) . '.', 413);
+    }
+
     $action = $_GET['action'] ?? 'bootstrap';
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
@@ -105,6 +109,45 @@ function ensure_method(string $expected, string $actual): void
     }
 }
 
+function post_max_size_bytes(): int
+{
+    $value = trim((string) ini_get('post_max_size'));
+    if ($value === '') {
+        return 0;
+    }
+
+    $unit = strtolower(substr($value, -1));
+    $number = (float) $value;
+
+    return match ($unit) {
+        'g' => (int) ($number * 1024 * 1024 * 1024),
+        'm' => (int) ($number * 1024 * 1024),
+        'k' => (int) ($number * 1024),
+        default => (int) $number,
+    };
+}
+
+function request_exceeds_post_max_size(): bool
+{
+    $contentLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+    $maxBytes = post_max_size_bytes();
+    return $contentLength > 0 && $maxBytes > 0 && $contentLength > $maxBytes && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST';
+}
+
+function readable_bytes(int $bytes): string
+{
+    if ($bytes <= 0) {
+        return '0 B';
+    }
+
+    $units = ['B', 'KB', 'MB', 'GB'];
+    $exponent = min((int) floor(log($bytes, 1024)), count($units) - 1);
+    $value = $bytes / (1024 ** $exponent);
+    $formatted = $value >= 10 || $exponent === 0 ? number_format($value, 0) : number_format($value, 1);
+
+    return $formatted . ' ' . $units[$exponent];
+}
+
 function current_session_payload(): ?array
 {
     if (!isset($_SESSION['user'])) {
@@ -159,7 +202,8 @@ function database_payload(bool $includeStaffData): array
             r.source_mode,
             r.resource_url,
             r.data_text,
-            r.original_filename
+            r.original_filename,
+            r.attachments_json
         FROM resources r
         INNER JOIN categories c ON c.id = r.category_id
     ';
@@ -203,6 +247,7 @@ function database_payload(bool $includeStaffData): array
 
 function normalize_resource_row(array $row): array
 {
+    $files = normalize_resource_files_from_row($row);
     return [
         'id' => (int) $row['id'],
         'title' => $row['title'],
@@ -219,6 +264,7 @@ function normalize_resource_row(array $row): array
         'resourceUrl' => $row['resource_url'],
         'dataText' => $row['data_text'],
         'originalFilename' => $row['original_filename'],
+        'files' => $files,
     ];
 }
 
@@ -267,7 +313,6 @@ function save_resource_action(): void
     $title = trim((string) ($_POST['title'] ?? ''));
     $description = trim((string) ($_POST['description'] ?? ''));
     $categoryId = (int) ($_POST['categoryId'] ?? 0);
-    $fileType = trim((string) ($_POST['fileType'] ?? ''));
     $keywords = normalize_keywords((string) ($_POST['keywords'] ?? ''));
     $authorSource = trim((string) ($_POST['authorSource'] ?? ''));
     $uploadDate = trim((string) ($_POST['uploadDate'] ?? ''));
@@ -275,7 +320,7 @@ function save_resource_action(): void
     $resourceUrl = trim((string) ($_POST['resourceUrl'] ?? ''));
     $dataText = trim((string) ($_POST['dataText'] ?? ''));
 
-    if ($title === '' || $description === '' || $categoryId <= 0 || !in_array($fileType, ['PDF', 'Video', 'Data'], true) || !$keywords || $authorSource === '' || $uploadDate === '') {
+    if ($title === '' || $description === '' || $categoryId <= 0 || $authorSource === '' || $uploadDate === '') {
         error_response('Please complete all required resource fields.', 422);
     }
 
@@ -301,28 +346,30 @@ function save_resource_action(): void
         $status = $existing['status'] ?? 'Active';
     }
 
-    $filePayload = handle_uploaded_file($fileType, $existing);
-    $sourceMode = $filePayload['source_mode'] ?? ($existing['source_mode'] ?? ($fileType === 'Data' && $dataText !== '' ? 'text' : 'url'));
-    $finalResourceUrl = $filePayload['resource_url'] ?? ($resourceUrl !== '' ? $resourceUrl : ($existing['resource_url'] ?? null));
-    $finalDataText = $filePayload['data_text'] ?? ($dataText !== '' ? $dataText : ($existing['data_text'] ?? null));
-    $storedFilename = $filePayload['stored_filename'] ?? ($existing['stored_filename'] ?? null);
-    $originalFilename = $filePayload['original_filename'] ?? ($existing['original_filename'] ?? null);
-    $mimeType = $filePayload['mime_type'] ?? ($existing['mime_type'] ?? null);
+    $existingFiles = $existing ? normalize_resource_files_from_row($existing) : [];
+    $fileBuild = build_resource_files($title, $resourceUrl, $dataText, $_FILES['uploadFile'] ?? null, $existingFiles);
+    $resourceFiles = $fileBuild['files'];
+    $fileType = $fileBuild['fileType'];
 
-    if ($fileType === 'Data' && $finalDataText === null && $finalResourceUrl === null) {
-        error_response('Provide pasted data or upload a dataset file for data resources.', 422);
+    if (!$resourceFiles || !in_array($fileType, ['PDF', 'Video', 'Data'], true)) {
+        error_response('Provide at least one valid file, URL, or data source for this resource.', 422);
     }
 
-    if ($fileType !== 'Data' && $finalResourceUrl === null) {
-        error_response('Provide an external file URL or upload a file.', 422);
-    }
+    $primaryFile = $resourceFiles[0];
+    $sourceMode = $primaryFile['sourceMode'] ?? 'upload';
+    $finalResourceUrl = $primaryFile['resourceUrl'] ?? null;
+    $finalDataText = $primaryFile['dataText'] ?? null;
+    $storedFilename = $primaryFile['storedFilename'] ?? null;
+    $originalFilename = $primaryFile['originalFilename'] ?? null;
+    $mimeType = $primaryFile['mimeType'] ?? null;
+    $attachmentsJson = json_encode($resourceFiles, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
     if ($resourceId === null) {
         $stmt = $pdo->prepare(
             'INSERT INTO resources (
                 title, description, category_id, file_type, keywords_json, author_source, upload_date, status, views,
-                source_mode, resource_url, data_text, stored_filename, original_filename, mime_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)'
+                source_mode, resource_url, data_text, stored_filename, original_filename, mime_type, attachments_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $title,
@@ -339,13 +386,14 @@ function save_resource_action(): void
             $storedFilename,
             $originalFilename,
             $mimeType,
+            $attachmentsJson,
         ]);
     } else {
         $stmt = $pdo->prepare(
             'UPDATE resources SET
                 title = ?, description = ?, category_id = ?, file_type = ?, keywords_json = ?, author_source = ?,
                 upload_date = ?, status = ?, source_mode = ?, resource_url = ?, data_text = ?, stored_filename = ?,
-                original_filename = ?, mime_type = ?
+                original_filename = ?, mime_type = ?, attachments_json = ?
              WHERE id = ?'
         );
         $stmt->execute([
@@ -363,8 +411,13 @@ function save_resource_action(): void
             $storedFilename,
             $originalFilename,
             $mimeType,
+            $attachmentsJson,
             $resourceId,
         ]);
+    }
+
+    if ($existing && $fileBuild['replacedExisting']) {
+        cleanup_removed_uploads($existingFiles, $resourceFiles);
     }
 
     respond(['ok' => true, 'db' => database_payload(true)]);
@@ -373,18 +426,15 @@ function save_resource_action(): void
 function delete_resource_action(): void
 {
     $resourceId = (int) ($_POST['id'] ?? 0);
-    $lookup = db()->prepare('SELECT stored_filename FROM resources WHERE id = ? LIMIT 1');
+    $lookup = db()->prepare('SELECT stored_filename, resource_url, data_text, original_filename, mime_type, source_mode, file_type, attachments_json FROM resources WHERE id = ? LIMIT 1');
     $lookup->execute([$resourceId]);
     $resource = $lookup->fetch();
 
     $stmt = db()->prepare('DELETE FROM resources WHERE id = ?');
     $stmt->execute([$resourceId]);
 
-    if ($resource && !empty($resource['stored_filename'])) {
-      $path = app_config()['upload_dir'] . DIRECTORY_SEPARATOR . $resource['stored_filename'];
-      if (is_file($path)) {
-          @unlink($path);
-      }
+    if ($resource) {
+        cleanup_removed_uploads(normalize_resource_files_from_row($resource), []);
     }
 
     respond(['ok' => true, 'db' => database_payload(true)]);
@@ -493,53 +543,198 @@ function normalize_keywords(string $keywordsString): array
     return $keywords;
 }
 
-function handle_uploaded_file(string $fileType, ?array $existing): array
+function normalize_resource_files_from_row(array $row): array
 {
-    if (!isset($_FILES['uploadFile']) || ($_FILES['uploadFile']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+    $decoded = json_decode((string) ($row['attachments_json'] ?? ''), true);
+    if (is_array($decoded) && $decoded) {
+        return array_values(array_filter(array_map(static function ($file): ?array {
+            if (!is_array($file)) {
+                return null;
+            }
+
+            return [
+                'fileType' => $file['fileType'] ?? '',
+                'sourceMode' => $file['sourceMode'] ?? 'upload',
+                'resourceUrl' => $file['resourceUrl'] ?? null,
+                'dataText' => $file['dataText'] ?? null,
+                'storedFilename' => $file['storedFilename'] ?? null,
+                'originalFilename' => $file['originalFilename'] ?? null,
+                'mimeType' => $file['mimeType'] ?? null,
+            ];
+        }, $decoded)));
+    }
+
+    if (!empty($row['stored_filename']) || !empty($row['resource_url']) || !empty($row['data_text'])) {
+        return [[
+            'fileType' => $row['file_type'] ?? '',
+            'sourceMode' => $row['source_mode'] ?? 'upload',
+            'resourceUrl' => $row['resource_url'] ?? null,
+            'dataText' => $row['data_text'] ?? null,
+            'storedFilename' => $row['stored_filename'] ?? null,
+            'originalFilename' => $row['original_filename'] ?? null,
+            'mimeType' => $row['mime_type'] ?? null,
+        ]];
+    }
+
+    return [];
+}
+
+function detect_file_type_from_name(string $filename): string
+{
+    $extension = strtolower((string) pathinfo($filename, PATHINFO_EXTENSION));
+    return match ($extension) {
+        'pdf' => 'PDF',
+        'mp4', 'mov', 'avi', 'webm', 'mkv' => 'Video',
+        'csv', 'json', 'txt' => 'Data',
+        default => '',
+    };
+}
+
+function normalize_uploaded_files(?array $uploadFile): array
+{
+    if (!$uploadFile || !isset($uploadFile['error'])) {
         return [];
     }
 
-    if ($_FILES['uploadFile']['error'] !== UPLOAD_ERR_OK) {
-        error_response('File upload failed.', 422);
-    }
-
-    $tmpName = $_FILES['uploadFile']['tmp_name'];
-    $originalName = basename((string) $_FILES['uploadFile']['name']);
-    $mimeType = mime_content_type($tmpName) ?: 'application/octet-stream';
-    $extension = pathinfo($originalName, PATHINFO_EXTENSION);
-    $storedFilename = uniqid('upload_', true) . ($extension ? '.' . strtolower($extension) : '');
-    $uploadDir = app_config()['upload_dir'];
-    $target = $uploadDir . DIRECTORY_SEPARATOR . $storedFilename;
-
-    if (!move_uploaded_file($tmpName, $target)) {
-        error_response('Unable to store the uploaded file.', 500);
-    }
-
-    if ($existing && !empty($existing['stored_filename'])) {
-        $oldPath = $uploadDir . DIRECTORY_SEPARATOR . $existing['stored_filename'];
-        if (is_file($oldPath)) {
-            @unlink($oldPath);
+    if (!is_array($uploadFile['error'])) {
+        if (($uploadFile['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+            return [];
         }
+
+        return [$uploadFile];
     }
 
-    $relativeUrl = 'uploads/' . rawurlencode($storedFilename);
-    if ($fileType === 'Data') {
+    $files = [];
+    foreach ($uploadFile['error'] as $index => $error) {
+        if ($error === UPLOAD_ERR_NO_FILE) {
+            continue;
+        }
+
+        $files[] = [
+            'name' => $uploadFile['name'][$index] ?? '',
+            'type' => $uploadFile['type'][$index] ?? '',
+            'tmp_name' => $uploadFile['tmp_name'][$index] ?? '',
+            'error' => $error,
+            'size' => $uploadFile['size'][$index] ?? 0,
+        ];
+    }
+
+    return $files;
+}
+
+function build_resource_files(string $title, string $resourceUrl, string $dataText, ?array $uploadFile, array $existingFiles): array
+{
+    $uploadedFiles = normalize_uploaded_files($uploadFile);
+    if (count($uploadedFiles) > 20) {
+        error_response('You can upload up to 20 files at a time.', 422);
+    }
+
+    if ($uploadedFiles) {
+        $storedFiles = store_uploaded_files($uploadedFiles);
         return [
-            'source_mode' => 'text',
-            'resource_url' => null,
-            'data_text' => (string) file_get_contents($target),
-            'stored_filename' => $storedFilename,
-            'original_filename' => $originalName,
-            'mime_type' => $mimeType,
+            'files' => $storedFiles,
+            'fileType' => $storedFiles[0]['fileType'] ?? '',
+            'replacedExisting' => true,
+        ];
+    }
+
+    if ($dataText !== '') {
+        return [
+            'files' => [[
+                'fileType' => 'Data',
+                'sourceMode' => 'text',
+                'resourceUrl' => null,
+                'dataText' => $dataText,
+                'storedFilename' => null,
+                'originalFilename' => slugify_filename($title) . '.txt',
+                'mimeType' => 'text/plain',
+            ]],
+            'fileType' => 'Data',
+            'replacedExisting' => true,
+        ];
+    }
+
+    if ($resourceUrl !== '') {
+        $detectedType = detect_file_type_from_name((string) parse_url($resourceUrl, PHP_URL_PATH));
+        return [
+            'files' => [[
+                'fileType' => $detectedType,
+                'sourceMode' => 'url',
+                'resourceUrl' => $resourceUrl,
+                'dataText' => null,
+                'storedFilename' => null,
+                'originalFilename' => basename((string) parse_url($resourceUrl, PHP_URL_PATH)) ?: slugify_filename($title),
+                'mimeType' => null,
+            ]],
+            'fileType' => $detectedType,
+            'replacedExisting' => true,
         ];
     }
 
     return [
-        'source_mode' => 'upload',
-        'resource_url' => $relativeUrl,
-        'data_text' => null,
-        'stored_filename' => $storedFilename,
-        'original_filename' => $originalName,
-        'mime_type' => $mimeType,
+        'files' => $existingFiles,
+        'fileType' => $existingFiles[0]['fileType'] ?? '',
+        'replacedExisting' => false,
     ];
+}
+
+function slugify_filename(string $value): string
+{
+    $slug = strtolower(trim((string) preg_replace('/[^a-z0-9]+/i', '-', $value), '-'));
+    return $slug !== '' ? $slug : 'resource';
+}
+
+function store_uploaded_files(array $uploadedFiles): array
+{
+    $uploadDir = app_config()['upload_dir'];
+    $stored = [];
+
+    foreach ($uploadedFiles as $uploadFile) {
+        if (($uploadFile['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            error_response('File upload failed.', 422);
+        }
+
+        $tmpName = $uploadFile['tmp_name'];
+        $originalName = basename((string) $uploadFile['name']);
+        $mimeType = mime_content_type($tmpName) ?: 'application/octet-stream';
+        $fileType = detect_file_type_from_name($originalName);
+        if (!in_array($fileType, ['PDF', 'Video', 'Data'], true)) {
+            error_response('One of the uploaded files has an unsupported type.', 422);
+        }
+
+        $extension = pathinfo($originalName, PATHINFO_EXTENSION);
+        $storedFilename = uniqid('upload_', true) . ($extension ? '.' . strtolower($extension) : '');
+        $target = $uploadDir . DIRECTORY_SEPARATOR . $storedFilename;
+
+        if (!move_uploaded_file($tmpName, $target)) {
+            error_response('Unable to store the uploaded file.', 500);
+        }
+
+        $relativeUrl = 'uploads/' . rawurlencode($storedFilename);
+        $stored[] = [
+            'fileType' => $fileType,
+            'sourceMode' => $fileType === 'Data' ? 'text' : 'upload',
+            'resourceUrl' => $fileType === 'Data' ? null : $relativeUrl,
+            'dataText' => $fileType === 'Data' ? (string) file_get_contents($target) : null,
+            'storedFilename' => $storedFilename,
+            'originalFilename' => $originalName,
+            'mimeType' => $mimeType,
+        ];
+    }
+
+    return $stored;
+}
+
+function cleanup_removed_uploads(array $previousFiles, array $currentFiles): void
+{
+    $currentStored = array_filter(array_map(static fn (array $file): ?string => $file['storedFilename'] ?? null, $currentFiles));
+    foreach ($previousFiles as $file) {
+        $storedFilename = $file['storedFilename'] ?? null;
+        if ($storedFilename && !in_array($storedFilename, $currentStored, true)) {
+            $path = app_config()['upload_dir'] . DIRECTORY_SEPARATOR . $storedFilename;
+            if (is_file($path)) {
+                @unlink($path);
+            }
+        }
+    }
 }

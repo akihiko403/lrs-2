@@ -250,6 +250,132 @@ button, input, select, textarea { font: inherit; }
   color: var(--text);
 }
 .field textarea { min-height: 118px; resize: vertical; }
+.field--file-upload {
+  position: relative;
+}
+.file-upload-input {
+  position: absolute;
+  inset: 0;
+  width: 0.1px;
+  height: 0.1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.upload-file-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px var(--space-3);
+  border: 1px solid rgba(18, 68, 56, 0.14);
+  border-radius: 14px;
+  background: #f9fcfa;
+  color: var(--text-soft);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  word-break: break-word;
+  cursor: pointer;
+}
+.upload-file-summary.has-files {
+  color: var(--text);
+}
+.upload-file-summary__button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(18, 68, 56, 0.24);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text);
+}
+.upload-file-summary__placeholder,
+.upload-file-summary__list {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-top: 4px;
+}
+.upload-file-summary__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.upload-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 8px 4px 10px;
+  border-radius: 999px;
+  background: rgba(13, 107, 87, 0.1);
+  color: var(--primary-deep);
+}
+.upload-file-chip__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.upload-file-chip__remove {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(22, 48, 44, 0.12);
+  color: var(--primary-deep);
+  cursor: pointer;
+  line-height: 1;
+}
+.existing-files-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(18, 68, 56, 0.14);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(248, 252, 250, 0.98), rgba(242, 248, 245, 0.94));
+}
+.existing-files-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-soft);
+  font-size: 0.92rem;
+}
+.existing-files-card__header strong {
+  color: var(--text);
+  font-size: 1rem;
+}
+.existing-files-card__list {
+  display: grid;
+  gap: 10px;
+}
+.existing-files-card__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(18, 68, 56, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+}
+.existing-files-card__item strong,
+.existing-files-card__item span {
+  min-width: 0;
+}
+.existing-files-card__item strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.existing-files-card__item span {
+  flex: 0 0 auto;
+  color: var(--text-soft);
+  font-size: 0.88rem;
+}
 .page-grid, .dashboard-grid, .student-sections, .filters-layout, .admin-layout, .resource-detail-grid, .stats-grid, .report-grid, .resource-form-grid { display: grid; gap: var(--space-5); }
 .student-sections { grid-template-columns: 1fr; }
 .section-card { padding: var(--space-4); }
@@ -496,6 +622,7 @@ button, input, select, textarea { font: inherit; }
   display: grid;
   place-items: center;
   padding: var(--space-5);
+  overflow-y: auto;
   background: rgba(7, 33, 28, 0.42);
   backdrop-filter: blur(8px);
 }
@@ -504,12 +631,15 @@ button, input, select, textarea { font: inherit; }
 }
 .modal-dialog {
   width: min(100%, 560px);
+  max-height: calc(100vh - 48px);
 }
 .modal-dialog--wide {
-  width: min(100%, 980px);
+  width: min(100%, 1180px);
 }
 .modal-card {
   padding: var(--space-5);
+  max-height: inherit;
+  overflow-y: auto;
   border-radius: 24px;
   border: 1px solid var(--border);
   background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248, 252, 250, 0.96));
@@ -898,6 +1028,9 @@ th {
     justify-content: flex-start;
   }
   .modal-dialog {
+    width: 100%;
+  }
+  .modal-dialog--wide {
     width: 100%;
   }
   .modal-backdrop {

@@ -92,6 +92,7 @@ function initialize_schema(PDO $pdo): void
             stored_filename VARCHAR(255) NULL,
             original_filename VARCHAR(255) NULL,
             mime_type VARCHAR(120) NULL,
+            attachments_json LONGTEXT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             CONSTRAINT fk_resources_category FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE RESTRICT
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
@@ -101,6 +102,12 @@ function initialize_schema(PDO $pdo): void
         'ALTER TABLE resources
          MODIFY COLUMN status ENUM("Pending Review", "Active", "Inactive") NOT NULL DEFAULT "Active"'
     );
+
+    try {
+        $pdo->exec('ALTER TABLE resources ADD COLUMN attachments_json LONGTEXT NULL AFTER mime_type');
+    } catch (Throwable $e) {
+        // Column already exists on upgraded databases.
+    }
 }
 
 function ensure_upload_directory(string $uploadDir): void
