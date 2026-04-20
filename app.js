@@ -255,7 +255,6 @@ function renderHomeView() {
               <h2>Search Results</h2>
               <p>${results.length} resource${results.length === 1 ? "" : "s"} found.</p>
             </div>
-            <p class="search-meta-line">Results update from the home page search bar and category chips.</p>
           </div>
           <div class="resource-grid resource-grid--wide" id="homeSearchResultsGrid"></div>
         </section>
