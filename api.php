@@ -30,6 +30,9 @@ try {
             break;
         case 'logout':
             ensure_method('POST', $method);
+            if (isset($_SESSION['user'])) {
+                log_audit_event('logout', 'account', 'Signed out of the system.');
+            }
             session_unset();
             session_destroy();
             respond(['ok' => true]);
@@ -45,7 +48,7 @@ try {
             break;
         case 'delete_resource':
             ensure_method('POST', $method);
-            require_staff();
+            require_administrator();
             delete_resource_action();
             break;
         case 'toggle_resource':
@@ -65,13 +68,22 @@ try {
             break;
         case 'delete_category':
             ensure_method('POST', $method);
-            require_staff();
+            require_administrator();
             delete_category_action();
             break;
         case 'create_user':
             ensure_method('POST', $method);
             require_administrator();
             create_user_action();
+            break;
+        case 'update_profile':
+            ensure_method('POST', $method);
+            update_profile_action();
+            break;
+        case 'update_settings':
+            ensure_method('POST', $method);
+            require_administrator();
+            update_settings_action();
             break;
         case 'toggle_user':
             ensure_method('POST', $method);
@@ -157,8 +169,11 @@ function current_session_payload(): ?array
     return [
         'id' => (int) $_SESSION['user']['id'],
         'fullName' => $_SESSION['user']['full_name'],
-        'username' => $_SESSION['user']['username'],
-        'role' => $_SESSION['user']['role'],
+        'email' => $_SESSION['user']['email'] ?? null,
+        'profileImage' => $_SESSION['user']['profile_image'] ?? null,
+        'username' => $_SESSION['user']['username'] ?? '',
+        'role' => $_SESSION['user']['role'] ?? '',
+        'status' => $_SESSION['user']['status'] ?? 'Active',
     ];
 }
 
@@ -216,6 +231,7 @@ function database_payload(bool $includeStaffData): array
     $resources = array_map('normalize_resource_row', $pdo->query($resourceSql)->fetchAll());
 
     $payload = [
+        'settings' => settings_payload($pdo),
         'categories' => array_map(static function (array $category): array {
             return [
                 'id' => (int) $category['id'],
@@ -228,21 +244,87 @@ function database_payload(bool $includeStaffData): array
     ];
 
     if ($includeStaffData) {
-        $users = $pdo->query('SELECT id, full_name, username, role, status FROM users ORDER BY full_name')->fetchAll();
+        $users = $pdo->query('SELECT id, full_name, email, profile_image, username, role, status FROM users ORDER BY full_name')->fetchAll();
         $payload['users'] = array_map(static function (array $user): array {
             return [
                 'id' => (int) $user['id'],
                 'fullName' => $user['full_name'],
+                'email' => $user['email'],
+                'profileImage' => $user['profile_image'],
                 'username' => $user['username'],
                 'role' => $user['role'],
                 'status' => $user['status'],
             ];
         }, $users);
+
+        if (($_SESSION['user']['role'] ?? '') === 'Administrator') {
+            $auditLogs = $pdo->query('
+                SELECT id, user_id, actor_name, actor_username, actor_role, action_type, entity_type, description, target_id, created_at
+                FROM audit_logs
+                ORDER BY created_at DESC, id DESC
+                LIMIT 200
+            ')->fetchAll();
+
+            $payload['auditLogs'] = array_map(static function (array $log): array {
+                return [
+                    'id' => (int) $log['id'],
+                    'userId' => $log['user_id'] !== null ? (int) $log['user_id'] : null,
+                    'actorName' => $log['actor_name'],
+                    'actorUsername' => $log['actor_username'],
+                    'actorRole' => $log['actor_role'],
+                    'actionType' => $log['action_type'],
+                    'entityType' => $log['entity_type'],
+                    'description' => $log['description'],
+                    'targetId' => $log['target_id'] !== null ? (int) $log['target_id'] : null,
+                    'createdAt' => $log['created_at'],
+                ];
+            }, $auditLogs);
+        } else {
+            $payload['auditLogs'] = [];
+        }
     } else {
         $payload['users'] = [];
+        $payload['auditLogs'] = [];
     }
 
     return $payload;
+}
+
+function settings_payload(PDO $pdo): array
+{
+    $rows = $pdo->query('SELECT setting_key, setting_value FROM app_settings')->fetchAll();
+    $settings = [];
+    foreach ($rows as $row) {
+        $settings[$row['setting_key']] = $row['setting_value'];
+    }
+
+    return [
+        'siteTitle' => $settings['site_title'] ?? 'Learning Resource System',
+        'siteDescription' => $settings['site_description'] ?? 'School of Fisheries',
+        'logoUrl' => $settings['site_logo_url'] ?? '',
+    ];
+}
+
+function log_audit_event(string $actionType, string $entityType, string $description, ?int $targetId = null, ?array $actor = null): void
+{
+    $actorData = $actor ?? ($_SESSION['user'] ?? null);
+    if (!$actorData) {
+        return;
+    }
+
+    db()->prepare(
+        'INSERT INTO audit_logs (user_id, actor_name, actor_username, actor_role, action_type, entity_type, description, target_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    )->execute([
+        isset($actorData['id']) ? (int) $actorData['id'] : null,
+        (string) ($actorData['full_name'] ?? $actorData['actor_name'] ?? 'Unknown User'),
+        (string) ($actorData['username'] ?? $actorData['actor_username'] ?? ''),
+        (string) ($actorData['role'] ?? $actorData['actor_role'] ?? ''),
+        $actionType,
+        $entityType,
+        $description,
+        $targetId,
+    ]);
 }
 
 function normalize_resource_row(array $row): array
@@ -273,7 +355,7 @@ function login_action(): void
     $username = trim((string) ($_POST['username'] ?? ''));
     $password = trim((string) ($_POST['password'] ?? ''));
 
-    $stmt = db()->prepare('SELECT id, full_name, username, password_hash, role, status FROM users WHERE username = ? LIMIT 1');
+    $stmt = db()->prepare('SELECT id, full_name, email, profile_image, username, password_hash, role, status FROM users WHERE username = ? LIMIT 1');
     $stmt->execute([$username]);
     $user = $stmt->fetch();
 
@@ -284,9 +366,14 @@ function login_action(): void
     $_SESSION['user'] = [
         'id' => (int) $user['id'],
         'full_name' => $user['full_name'],
+        'email' => $user['email'],
+        'profile_image' => $user['profile_image'],
         'username' => $user['username'],
         'role' => $user['role'],
+        'status' => $user['status'],
     ];
+
+    log_audit_event('login', 'account', 'Signed in to the system.');
 
     respond([
         'ok' => true,
@@ -388,6 +475,8 @@ function save_resource_action(): void
             $mimeType,
             $attachmentsJson,
         ]);
+        $resourceId = (int) $pdo->lastInsertId();
+        log_audit_event('upload', 'resource', sprintf('Uploaded resource "%s".', $title), $resourceId);
     } else {
         $stmt = $pdo->prepare(
             'UPDATE resources SET
@@ -414,6 +503,7 @@ function save_resource_action(): void
             $attachmentsJson,
             $resourceId,
         ]);
+        log_audit_event('edit', 'resource', sprintf('Edited resource "%s".', $title), $resourceId);
     }
 
     if ($existing && $fileBuild['replacedExisting']) {
@@ -426,12 +516,16 @@ function save_resource_action(): void
 function delete_resource_action(): void
 {
     $resourceId = (int) ($_POST['id'] ?? 0);
-    $lookup = db()->prepare('SELECT stored_filename, resource_url, data_text, original_filename, mime_type, source_mode, file_type, attachments_json FROM resources WHERE id = ? LIMIT 1');
+    $lookup = db()->prepare('SELECT title, stored_filename, resource_url, data_text, original_filename, mime_type, source_mode, file_type, attachments_json FROM resources WHERE id = ? LIMIT 1');
     $lookup->execute([$resourceId]);
     $resource = $lookup->fetch();
 
     $stmt = db()->prepare('DELETE FROM resources WHERE id = ?');
     $stmt->execute([$resourceId]);
+
+    if ($resource) {
+        log_audit_event('delete', 'resource', sprintf('Deleted resource "%s".', $resource['title'] ?: 'Resource'), $resourceId);
+    }
 
     if ($resource) {
         cleanup_removed_uploads(normalize_resource_files_from_row($resource), []);
@@ -454,6 +548,7 @@ function toggle_resource_action(): void
          WHERE id = ?'
     );
     $stmt->execute([$resourceId]);
+    log_audit_event('edit', 'resource', 'Changed a resource review status.', $resourceId);
     respond(['ok' => true, 'db' => database_payload(true)]);
 }
 
@@ -468,6 +563,8 @@ function create_category_action(): void
     $slug = strtolower(trim((string) preg_replace('/[^a-z0-9]+/i', '-', $name), '-'));
     $stmt = db()->prepare('INSERT INTO categories (slug, name, description) VALUES (?, ?, ?)');
     $stmt->execute([$slug, $name, $description]);
+    $categoryId = (int) db()->lastInsertId();
+    log_audit_event('add', 'category', sprintf('Added category "%s".', $name), $categoryId);
     respond(['ok' => true, 'db' => database_payload(true)]);
 }
 
@@ -484,6 +581,7 @@ function update_category_action(): void
     $slug = strtolower(trim((string) preg_replace('/[^a-z0-9]+/i', '-', $name), '-'));
     $stmt = db()->prepare('UPDATE categories SET slug = ?, name = ?, description = ? WHERE id = ?');
     $stmt->execute([$slug, $name, $description, $categoryId]);
+    log_audit_event('edit', 'category', sprintf('Edited category "%s".', $name), $categoryId);
     respond(['ok' => true, 'db' => database_payload(true)]);
 }
 
@@ -498,23 +596,146 @@ function delete_category_action(): void
 
     $stmt = db()->prepare('DELETE FROM categories WHERE id = ?');
     $stmt->execute([$categoryId]);
+    log_audit_event('delete', 'category', 'Deleted a category.', $categoryId);
     respond(['ok' => true, 'db' => database_payload(true)]);
 }
 
 function create_user_action(): void
 {
     $fullName = trim((string) ($_POST['fullName'] ?? ''));
+    $email = trim((string) ($_POST['email'] ?? ''));
     $username = trim((string) ($_POST['username'] ?? ''));
     $password = trim((string) ($_POST['password'] ?? ''));
     $role = trim((string) ($_POST['role'] ?? ''));
 
-    if ($fullName === '' || $username === '' || $password === '' || !in_array($role, ['Administrator', 'Encoder'], true)) {
+    if ($fullName === '' || $email === '' || $username === '' || $password === '' || !in_array($role, ['Administrator', 'Encoder'], true)) {
         error_response('Please complete all required user fields.', 422);
     }
 
-    $stmt = db()->prepare('INSERT INTO users (full_name, username, password_hash, role, status) VALUES (?, ?, ?, ?, "Active")');
-    $stmt->execute([$fullName, $username, password_hash($password, PASSWORD_DEFAULT), $role]);
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        error_response('Please enter a valid email address.', 422);
+    }
+
+    $stmt = db()->prepare('INSERT INTO users (full_name, email, profile_image, username, password_hash, role, status) VALUES (?, ?, NULL, ?, ?, ?, "Active")');
+    $stmt->execute([$fullName, $email, $username, password_hash($password, PASSWORD_DEFAULT), $role]);
+    $createdUserId = (int) db()->lastInsertId();
+    log_audit_event('add', 'user', sprintf('Added user account "%s".', $fullName), $createdUserId);
     respond(['ok' => true, 'db' => database_payload(true)]);
+}
+
+function update_profile_action(): void
+{
+    $userId = (int) ($_SESSION['user']['id'] ?? 0);
+    if ($userId <= 0) {
+        error_response('Unauthorized.', 401);
+    }
+
+    $fullName = trim((string) ($_POST['fullName'] ?? ''));
+    $email = trim((string) ($_POST['email'] ?? ''));
+
+    if ($fullName === '' || $email === '') {
+        error_response('Name and email are required.', 422);
+    }
+
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        error_response('Please enter a valid email address.', 422);
+    }
+
+    $pdo = db();
+    $lookup = $pdo->prepare('SELECT profile_image, username, role, status FROM users WHERE id = ? LIMIT 1');
+    $lookup->execute([$userId]);
+    $existing = $lookup->fetch();
+    if (!$existing) {
+        error_response('User account not found.', 404);
+    }
+
+    $profileImage = $existing['profile_image'] ?? null;
+    if (isset($_FILES['profileImage']) && ($_FILES['profileImage']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+        $profileImage = store_profile_image($_FILES['profileImage'], $profileImage);
+    }
+
+    $stmt = $pdo->prepare('UPDATE users SET full_name = ?, email = ?, profile_image = ? WHERE id = ?');
+    $stmt->execute([$fullName, $email, $profileImage, $userId]);
+
+    $_SESSION['user']['full_name'] = $fullName;
+    $_SESSION['user']['email'] = $email;
+    $_SESSION['user']['profile_image'] = $profileImage;
+    $_SESSION['user']['username'] = $_SESSION['user']['username'] ?? $existing['username'];
+    $_SESSION['user']['role'] = $_SESSION['user']['role'] ?? $existing['role'];
+    $_SESSION['user']['status'] = $_SESSION['user']['status'] ?? $existing['status'];
+
+    log_audit_event('edit', 'profile', 'Updated personal profile information.', $userId);
+
+    respond([
+        'ok' => true,
+        'session' => current_session_payload(),
+        'db' => database_payload(true),
+    ]);
+}
+
+function update_settings_action(): void
+{
+    $siteTitle = trim((string) ($_POST['siteTitle'] ?? ''));
+    $siteDescription = trim((string) ($_POST['siteDescription'] ?? ''));
+
+    if ($siteTitle === '' || $siteDescription === '') {
+        error_response('Title and description are required.', 422);
+    }
+
+    $pdo = db();
+    $stmt = $pdo->prepare('REPLACE INTO app_settings (setting_key, setting_value) VALUES (?, ?)');
+    $stmt->execute(['site_title', $siteTitle]);
+    $stmt->execute(['site_description', $siteDescription]);
+    $currentLogo = settings_payload($pdo)['logoUrl'] ?? '';
+    $logoUrl = $currentLogo;
+
+    if (isset($_FILES['siteLogo']) && ($_FILES['siteLogo']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+        $logoUrl = store_site_logo($_FILES['siteLogo'], $currentLogo ?: null);
+    }
+
+    $stmt->execute(['site_logo_url', $logoUrl]);
+
+    log_audit_event('edit', 'settings', 'Updated site title and description.');
+
+    respond([
+        'ok' => true,
+        'db' => database_payload(true),
+        'session' => current_session_payload(),
+    ]);
+}
+
+function store_site_logo(array $uploadFile, ?string $existingLogo = null): string
+{
+    if (($uploadFile['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        error_response('Logo upload failed.', 422);
+    }
+
+    $tmpName = $uploadFile['tmp_name'] ?? '';
+    $originalName = basename((string) ($uploadFile['name'] ?? ''));
+    $extension = strtolower((string) pathinfo($originalName, PATHINFO_EXTENSION));
+    $allowedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'svg'];
+
+    if (!in_array($extension, $allowedExtensions, true)) {
+        error_response('Logo must be JPG, PNG, WEBP, or SVG.', 422);
+    }
+
+    $uploadDir = app_config()['upload_dir'];
+    $storedFilename = uniqid('logo_', true) . '.' . $extension;
+    $target = $uploadDir . DIRECTORY_SEPARATOR . $storedFilename;
+
+    if (!move_uploaded_file($tmpName, $target)) {
+        error_response('Unable to store the logo image.', 500);
+    }
+
+    if ($existingLogo) {
+        $existingFilename = basename((string) $existingLogo);
+        $existingPath = $uploadDir . DIRECTORY_SEPARATOR . $existingFilename;
+        if (is_file($existingPath)) {
+            @unlink($existingPath);
+        }
+    }
+
+    return 'uploads/' . rawurlencode($storedFilename);
 }
 
 function toggle_user_action(): void
@@ -522,6 +743,7 @@ function toggle_user_action(): void
     $userId = (int) ($_POST['id'] ?? 0);
     $stmt = db()->prepare('UPDATE users SET status = CASE WHEN status = "Active" THEN "Inactive" ELSE "Active" END WHERE id = ?');
     $stmt->execute([$userId]);
+    log_audit_event('edit', 'user', 'Changed a user account status.', $userId);
     respond(['ok' => true, 'db' => database_payload(true)]);
 }
 
@@ -534,6 +756,7 @@ function delete_user_action(): void
 
     $stmt = db()->prepare('DELETE FROM users WHERE id = ?');
     $stmt->execute([$userId]);
+    log_audit_event('delete', 'user', 'Deleted a user account.', $userId);
     respond(['ok' => true, 'db' => database_payload(true)]);
 }
 
@@ -620,6 +843,40 @@ function normalize_uploaded_files(?array $uploadFile): array
     }
 
     return $files;
+}
+
+function store_profile_image(array $uploadFile, ?string $existingImage = null): string
+{
+    if (($uploadFile['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        error_response('Profile image upload failed.', 422);
+    }
+
+    $tmpName = $uploadFile['tmp_name'] ?? '';
+    $originalName = basename((string) ($uploadFile['name'] ?? ''));
+    $extension = strtolower((string) pathinfo($originalName, PATHINFO_EXTENSION));
+    $allowedExtensions = ['jpg', 'jpeg', 'png', 'webp'];
+
+    if (!in_array($extension, $allowedExtensions, true)) {
+        error_response('Profile image must be JPG, PNG, or WEBP.', 422);
+    }
+
+    $uploadDir = app_config()['upload_dir'];
+    $storedFilename = uniqid('profile_', true) . '.' . $extension;
+    $target = $uploadDir . DIRECTORY_SEPARATOR . $storedFilename;
+
+    if (!move_uploaded_file($tmpName, $target)) {
+        error_response('Unable to store the profile image.', 500);
+    }
+
+    if ($existingImage) {
+        $existingFilename = basename((string) $existingImage);
+        $existingPath = $uploadDir . DIRECTORY_SEPARATOR . $existingFilename;
+        if (is_file($existingPath)) {
+            @unlink($existingPath);
+        }
+    }
+
+    return 'uploads/' . rawurlencode($storedFilename);
 }
 
 function build_resource_files(string $title, string $resourceUrl, string $dataText, ?array $uploadFile, array $existingFiles): array

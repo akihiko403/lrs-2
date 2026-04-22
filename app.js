@@ -2,13 +2,24 @@ const app = document.getElementById("app");
 const topbarActions = document.getElementById("topbarActions");
 const publicNav = document.getElementById("publicNav");
 const resourceCardTemplate = document.getElementById("resourceCardTemplate");
+const brandLink = document.querySelector(".brand");
+const brandMark = document.querySelector(".brand-mark");
+const brandTitle = document.querySelector(".brand strong");
+const brandDescription = document.querySelector(".brand small");
 
 const state = {
   db: {
+    settings: {
+      siteTitle: "Learning Resource System",
+      siteDescription: "School of Fisheries",
+      logoUrl: ""
+    },
     categories: [],
     resources: [],
-    users: []
+    users: [],
+    auditLogs: []
   },
+  notifications: [],
   session: null,
   route: parseRoute(),
   toastTimer: null,
@@ -16,6 +27,9 @@ const state = {
 };
 
 const RESOURCE_STATUSES = ["Pending Review", "Active", "Inactive"];
+const NOTIFICATIONS_STORAGE_KEY = "lrs_notifications";
+
+state.notifications = loadNotifications();
 
 function parseRoute() {
   const hash = window.location.hash.replace(/^#/, "") || "home";
@@ -48,6 +62,118 @@ function formatDate(dateString) {
   });
 }
 
+function formatCompactDate(dateString) {
+  return new Date(dateString).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric"
+  });
+}
+
+function getCurrentUser() {
+  if (!state.session) return null;
+  return state.db.users.find((user) => Number(user.id) === Number(state.session.id)) || state.session;
+}
+
+function applyBranding() {
+  const title = state.db.settings?.siteTitle || "Learning Resource System";
+  const description = state.db.settings?.siteDescription || "School of Fisheries";
+  const logoUrl = state.db.settings?.logoUrl || "";
+
+  if (brandTitle) {
+    brandTitle.textContent = title;
+  }
+
+  if (brandDescription) {
+    brandDescription.textContent = description;
+  }
+
+  if (brandLink) {
+    brandLink.setAttribute("aria-label", `${description} ${title}`.trim());
+  }
+
+  if (brandMark) {
+    if (logoUrl) {
+      brandMark.innerHTML = `<img class="brand-mark__image" src="${escapeAttribute(logoUrl)}" alt="${escapeAttribute(title)}">`;
+    } else {
+      brandMark.textContent = "SF";
+    }
+  }
+
+  document.title = `${description} ${title}`.trim();
+}
+
+function getProfileImageMarkup(user) {
+  if (user?.profileImage) {
+    return `<img class="profile-avatar__image" src="${escapeAttribute(user.profileImage)}" alt="${escapeAttribute(user.fullName || "Profile image")}">`;
+  }
+
+  const initial = escapeHtml((user?.fullName || state.session?.fullName || "U").trim().charAt(0).toUpperCase() || "U");
+  return `<span class="profile-avatar__initial" aria-hidden="true">${initial}</span>`;
+}
+
+function getTopbarAvatarMarkup(user) {
+  if (user?.profileImage) {
+    return `<img class="topbar-avatar__image" src="${escapeAttribute(user.profileImage)}" alt="${escapeAttribute(user.fullName || "Profile image")}">`;
+  }
+
+  const initial = escapeHtml((user?.fullName || state.session?.fullName || "U").trim().charAt(0).toUpperCase() || "U");
+  return `<span class="topbar-avatar__initial" aria-hidden="true">${initial}</span>`;
+}
+
+function closeAvatarPreviewModal() {
+  document.getElementById("avatarPreviewModal")?.remove();
+  if (window.LRSAvatarPreviewEscapeHandler) {
+    document.removeEventListener("keydown", window.LRSAvatarPreviewEscapeHandler);
+    window.LRSAvatarPreviewEscapeHandler = null;
+  }
+}
+
+function openAvatarPreviewModal(user) {
+  closeAvatarPreviewModal();
+
+  const modal = document.createElement("div");
+  modal.className = "modal-backdrop";
+  modal.id = "avatarPreviewModal";
+  modal.innerHTML = `
+    <div class="modal-dialog modal-dialog--avatar" role="dialog" aria-modal="true" aria-labelledby="avatarPreviewTitle">
+      <div class="modal-card avatar-preview-card">
+        <div class="section-heading modal-card__header">
+          <div>
+            <h3 id="avatarPreviewTitle">Profile Image</h3>
+            <p>View the current profile image.</p>
+          </div>
+        </div>
+        <div class="avatar-preview-card__body">
+          <div class="avatar-preview-card__image">
+            ${getProfileImageMarkup(user)}
+          </div>
+        </div>
+        <div class="inline-actions modal-card__actions">
+          <button class="button button--ghost" type="button" id="closeAvatarPreviewButton">Close</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) {
+      closeAvatarPreviewModal();
+    }
+  });
+
+  document.getElementById("closeAvatarPreviewButton")?.addEventListener("click", closeAvatarPreviewModal);
+
+  const handleEscape = (event) => {
+    if (event.key === "Escape") {
+      closeAvatarPreviewModal();
+    }
+  };
+  window.LRSAvatarPreviewEscapeHandler = handleEscape;
+  document.addEventListener("keydown", handleEscape);
+}
+
 function getLocalDateInputValue(date = new Date()) {
   const offsetDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
   return offsetDate.toISOString().slice(0, 10);
@@ -59,6 +185,57 @@ function formatBytes(bytes) {
   const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   const value = bytes / (1024 ** exponent);
   return `${value >= 10 || exponent === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[exponent]}`;
+}
+
+function loadNotifications() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(NOTIFICATIONS_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveNotifications() {
+  localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(state.notifications));
+}
+
+function addNotification(title, detail = "") {
+  state.notifications = [
+    {
+      id: Date.now(),
+      title,
+      detail,
+      createdAt: new Date().toISOString(),
+      read: false
+    },
+    ...state.notifications
+  ].slice(0, 20);
+  saveNotifications();
+}
+
+function markNotificationsRead() {
+  let hasUnread = false;
+  state.notifications = state.notifications.map((notification) => {
+    if (notification.read) return notification;
+    hasUnread = true;
+    return { ...notification, read: true };
+  });
+
+  if (hasUnread) {
+    saveNotifications();
+  }
+}
+
+function formatNotificationTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
 }
 
 function showToast(message) {
@@ -89,6 +266,7 @@ async function apiRequest(action, options = {}) {
 
   if (payload.db) {
     state.db = payload.db;
+    applyBranding();
   }
 
   if (Object.prototype.hasOwnProperty.call(payload, "session")) {
@@ -199,18 +377,118 @@ function updateTopbar() {
   });
 
   if (!state.session) {
-    topbarActions.innerHTML = `<a class="button button--ghost" href="#admin">Admin Login</a>`;
+    topbarActions.innerHTML = `<a class="button button--ghost" href="#admin">Log In</a>`;
     return;
   }
 
+  const currentUser = getCurrentUser();
+  const unreadCount = state.notifications.filter((notification) => !notification.read).length;
+
   topbarActions.innerHTML = `
-    <a class="button button--soft" href="#admin/dashboard">${state.session.role}</a>
-    <span class="muted">${state.session.fullName}</span>
-    <button class="button button--ghost" type="button" id="logoutButton">Logout</button>
+    <div class="notification-menu" id="notificationMenu">
+      <button class="icon-button icon-button--ghost topbar-bell" type="button" id="notificationBell" aria-label="Notifications" aria-expanded="false" aria-haspopup="true">
+        <span aria-hidden="true">&#128276;</span>
+        ${unreadCount ? `<span class="topbar-bell__badge">${unreadCount > 9 ? "9+" : unreadCount}</span>` : ""}
+      </button>
+      <div class="notification-menu__dropdown" id="notificationDropdown" hidden>
+        <div class="notification-menu__header">
+          <strong>Notifications</strong>
+        </div>
+        ${state.notifications.length
+          ? `<ul class="notification-menu__list">
+              ${state.notifications.map((notification) => `
+                <li class="notification-menu__item ${notification.read ? "" : "is-unread"}">
+                  <strong>${escapeHtml(notification.title || "Notification")}</strong>
+                  ${notification.detail ? `<p>${escapeHtml(notification.detail)}</p>` : ""}
+                  <span>${escapeHtml(formatNotificationTime(notification.createdAt))}</span>
+                </li>
+              `).join("")}
+            </ul>`
+          : `<div class="notification-menu__empty">No notifications yet.</div>`}
+      </div>
+    </div>
+    <button class="topbar-avatar" type="button" id="profileAvatarButton" aria-label="Open profile">
+      ${getTopbarAvatarMarkup(currentUser)}
+    </button>
+    <div class="user-menu" id="userMenu">
+      <div class="user-menu__trigger">
+        <button class="user-menu__role-button" type="button" id="userMenuRoleButton">${state.session.role}</button>
+        <button class="user-menu__caret-button" type="button" id="userMenuButton" aria-expanded="false" aria-haspopup="true">
+        <span class="user-menu__caret" aria-hidden="true">▾</span>
+      </button>
+      </div>
+      <div class="user-menu__dropdown" id="userMenuDropdown" hidden>
+        <button class="user-menu__item" type="button" id="profileButton">Profile</button>
+        ${isAdministrator() ? `<button class="user-menu__item" type="button" id="settingsButton">Settings</button>` : ""}
+        <button class="user-menu__item user-menu__item--danger" type="button" id="logoutButton">Log Out</button>
+      </div>
+    </div>
   `;
+
+  const notificationMenu = document.getElementById("notificationMenu");
+  const notificationBell = document.getElementById("notificationBell");
+  const notificationDropdown = document.getElementById("notificationDropdown");
+  const userMenu = document.getElementById("userMenu");
+  const userMenuRoleButton = document.getElementById("userMenuRoleButton");
+  const userMenuButton = document.getElementById("userMenuButton");
+  const userMenuDropdown = document.getElementById("userMenuDropdown");
+  const profileAvatarButton = document.getElementById("profileAvatarButton");
+
+  notificationBell.addEventListener("click", () => {
+    const isOpen = !notificationDropdown.hidden;
+    notificationDropdown.hidden = isOpen;
+    notificationBell.setAttribute("aria-expanded", String(!isOpen));
+    notificationMenu.classList.toggle("is-open", !isOpen);
+    userMenuDropdown.hidden = true;
+    userMenuButton.setAttribute("aria-expanded", "false");
+    userMenu.classList.remove("is-open");
+
+    if (!isOpen) {
+      markNotificationsRead();
+      notificationDropdown.querySelectorAll(".notification-menu__item").forEach((item) => {
+        item.classList.remove("is-unread");
+      });
+      notificationBell.querySelector(".topbar-bell__badge")?.remove();
+    }
+  });
+
+  userMenuButton.addEventListener("click", () => {
+    const isOpen = !userMenuDropdown.hidden;
+    userMenuDropdown.hidden = isOpen;
+    userMenuButton.setAttribute("aria-expanded", String(!isOpen));
+    userMenu.classList.toggle("is-open", !isOpen);
+    notificationDropdown.hidden = true;
+    notificationBell.setAttribute("aria-expanded", "false");
+    notificationMenu.classList.remove("is-open");
+  });
+
+  userMenuRoleButton.addEventListener("click", () => {
+    navigate("admin/dashboard");
+  });
+
+  profileAvatarButton.addEventListener("click", () => {
+    openAvatarPreviewModal(currentUser);
+  });
+
+  document.getElementById("profileButton").addEventListener("click", () => {
+    userMenuDropdown.hidden = true;
+    userMenuButton.setAttribute("aria-expanded", "false");
+    userMenu.classList.remove("is-open");
+    navigate("profile");
+  });
+
+  document.getElementById("settingsButton")?.addEventListener("click", () => {
+    userMenuDropdown.hidden = true;
+    userMenuButton.setAttribute("aria-expanded", "false");
+    userMenu.classList.remove("is-open");
+    navigate("settings");
+  });
 
   document.getElementById("logoutButton").addEventListener("click", async () => {
     try {
+      userMenuDropdown.hidden = true;
+      userMenuButton.setAttribute("aria-expanded", "false");
+      userMenu.classList.remove("is-open");
       await apiRequest("logout", { method: "POST" });
       showToast("You have been logged out.");
       navigate("home");
@@ -220,6 +498,31 @@ function updateTopbar() {
     }
   });
 }
+
+document.addEventListener("click", (event) => {
+  const notificationMenu = document.getElementById("notificationMenu");
+  const notificationBell = document.getElementById("notificationBell");
+  const notificationDropdown = document.getElementById("notificationDropdown");
+  const userMenu = document.getElementById("userMenu");
+  const userMenuButton = document.getElementById("userMenuButton");
+  const userMenuDropdown = document.getElementById("userMenuDropdown");
+
+  if (!userMenu || !userMenuButton || !userMenuDropdown || !notificationMenu || !notificationBell || !notificationDropdown) {
+    return;
+  }
+
+  if (!notificationMenu.contains(event.target)) {
+    notificationDropdown.hidden = true;
+    notificationBell.setAttribute("aria-expanded", "false");
+    notificationMenu.classList.remove("is-open");
+  }
+
+  if (!userMenu.contains(event.target)) {
+    userMenuDropdown.hidden = true;
+    userMenuButton.setAttribute("aria-expanded", "false");
+    userMenu.classList.remove("is-open");
+  }
+});
 
 function renderLoading() {
   app.innerHTML = `
@@ -451,7 +754,8 @@ function getModuleTitle(module) {
     resources: "Learning Resource Management",
     categories: "Category Management",
     reports: "Reports",
-    users: "User Management"
+    users: "User Management",
+    audit: "Audit Log"
   }[module] || "Dashboard";
 }
 
@@ -461,7 +765,8 @@ function getModuleDescription(module) {
     resources: "Review, edit, approve, activate, or deactivate fisheries learning resources.",
     categories: "Maintain categories used in student browsing and filtering.",
     reports: "View resource summaries by type, category, and publication status.",
-    users: "Manage encoder and administrator accounts."
+    users: "Manage encoder and administrator accounts.",
+    audit: "Monitor account sign-ins and administrator activity such as adding, editing, deleting, and uploading."
   }[module] || "";
 }
 
@@ -469,16 +774,32 @@ function renderLoginView() {
   app.innerHTML = `
     <section class="login-layout">
       <div class="login-card">
-        <h1 class="login-card__title">Admin Login</h1>
-        <p class="muted">Only Encoder and Administrator accounts can access the admin page.</p>
+        <h1 class="login-card__title">LOGIN</h1>
         <form id="loginForm">
-          <label class="field"><input type="text" name="username" placeholder="Username" required></label>
-          <label class="field"><input type="password" name="password" placeholder="Password" required></label>
-          <button class="button" type="submit">Login</button>
+          <label class="login-field">
+            <span class="login-field__label">Username</span>
+            <input type="text" name="username" placeholder="Enter your username" required>
+          </label>
+          <label class="login-field">
+            <span class="login-field__label">Password</span>
+            <input type="password" name="password" placeholder="Enter your password" required>
+          </label>
+          <div class="login-card__options">
+            <label class="login-check">
+              <input type="checkbox" name="remember">
+              <span>Remember me</span>
+            </label>
+            <button class="login-link" type="button" id="forgotPasswordButton">Forgot Password?</button>
+          </div>
+          <button class="button login-card__button" type="submit">Login</button>
         </form>
       </div>
     </section>
   `;
+
+  document.getElementById("forgotPasswordButton").addEventListener("click", () => {
+    showToast("Please contact the administrator to reset your password.");
+  });
 
   document.getElementById("loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -531,9 +852,9 @@ function renderResourcesTable(resources) {
                 <button class="icon-button icon-button--soft" type="button" data-toggle-resource="${resource.id}" title="${resource.status === "Active" ? "Deactivate resource" : "Activate resource"}" aria-label="${resource.status === "Active" ? "Deactivate resource" : "Activate resource"}">
                   <span aria-hidden="true">${resource.status === "Active" ? "◐" : "✓"}</span>
                 </button>
-                <button class="icon-button icon-button--danger" type="button" data-delete-resource="${resource.id}" title="Delete resource" aria-label="Delete resource">
+                ${isAdministrator() ? `<button class="icon-button icon-button--danger" type="button" data-delete-resource="${resource.id}" title="Delete resource" aria-label="Delete resource">` : ""}
                   <span aria-hidden="true">🗑</span>
-                </button>
+                ${isAdministrator() ? `</button>` : ""}
               </td>
             </tr>
           `).join("")}
@@ -635,6 +956,253 @@ function renderCategoriesModule() {
       </div>
     </div>
   `;
+}
+
+function renderCategoriesModule() {
+  return `
+    <section class="list-card category-management-card">
+      <div class="section-heading category-management-card__header">
+        <div>
+          <h3>Category List</h3>
+          <p>Maintain the categories used in student browsing, filtering, and resource organization.</p>
+        </div>
+        <button class="button" type="button" id="openCategoryModalButton">Add Category</button>
+      </div>
+      <div class="table-wrap">
+        <table class="category-table">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Description</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.db.categories.map((category) => `
+              <tr>
+                <td><strong>${category.name}</strong></td>
+                <td><span class="muted">${category.description}</span></td>
+                <td>
+                  <div class="table-actions category-table__actions">
+                    <button class="icon-button icon-button--ghost" type="button" data-view-category="${category.id}" title="View category" aria-label="View category">
+                      <span aria-hidden="true">&#9673;</span>
+                    </button>
+                    <button class="icon-button icon-button--soft" type="button" data-edit-category="${category.id}" title="Edit category" aria-label="Edit category">
+                      <span aria-hidden="true">&#9998;</span>
+                    </button>
+                    ${isAdministrator() ? `<button class="icon-button icon-button--danger" type="button" data-delete-category="${category.id}" title="Delete category" aria-label="Delete category">` : ""}
+                      <span aria-hidden="true">&#128465;</span>
+                    ${isAdministrator() ? `</button>` : ""}
+                  </div>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <div class="modal-backdrop" id="categoryModal" hidden>
+      <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="categoryModalTitle">
+        <div class="modal-card">
+          <div class="section-heading modal-card__header">
+            <div>
+              <h3 id="categoryModalTitle">Add Category</h3>
+              <p id="categoryModalSubtitle">Create a new category for student browsing and admin organization.</p>
+            </div>
+          </div>
+          <form id="categoryForm" class="modal-form">
+            <input type="hidden" name="id" value="">
+            <label class="field"><input type="text" name="name" placeholder="Category name" required></label>
+            <label class="field"><textarea name="description" placeholder="Category description" required></textarea></label>
+            <div class="inline-actions modal-card__actions">
+              <button class="button" type="submit" id="saveCategoryButton">Save Category</button>
+              <button class="button button--ghost" type="button" id="cancelCategoryModalButton">Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="modal-backdrop" id="categoryViewModal" hidden>
+      <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="categoryViewModalTitle">
+        <div class="modal-card">
+          <div class="section-heading modal-card__header">
+            <div>
+              <h3 id="categoryViewModalTitle">Category Details</h3>
+              <p>View the selected category information.</p>
+            </div>
+          </div>
+          <div class="modal-form">
+            <div class="list-card">
+              <ul>
+                <li class="list-row"><span>Name</span><strong id="categoryViewName"></strong></li>
+                <li class="list-row"><span>Description</span><strong id="categoryViewDescription"></strong></li>
+              </ul>
+            </div>
+            <div class="inline-actions modal-card__actions">
+              <button class="button button--ghost" type="button" id="closeCategoryViewFooterButton">Close</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderProfileView() {
+  if (!state.session) {
+    renderLoginView();
+    return;
+  }
+
+  const currentUser = getCurrentUser();
+  const email = currentUser?.email || `${state.session.username}@schooloffisheries.local`;
+  const status = currentUser?.status || state.session.status || "Active";
+
+  app.innerHTML = `
+    <section class="view">
+      <section class="list-card profile-card">
+        <div class="section-heading profile-card__header">
+          <div>
+            <h1>Profile</h1>
+            <p>View your account information.</p>
+          </div>
+          <a class="button button--ghost" href="#admin/dashboard">Back</a>
+        </div>
+        <div class="profile-card__identity">
+          <div class="profile-avatar" id="profileAvatarPreview">${getProfileImageMarkup(currentUser)}</div>
+          <div>
+          <span class="pill pill--soft">${state.session.role}</span>
+          <h2>${escapeHtml(currentUser?.fullName || state.session.fullName)}</h2>
+          </div>
+        </div>
+        <form class="profile-form" id="profileForm" enctype="multipart/form-data">
+          <div class="report-grid">
+            <label class="field">
+              <span class="login-field__label">Name</span>
+              <input type="text" name="fullName" value="${escapeAttribute(currentUser?.fullName || state.session.fullName)}" required>
+            </label>
+            <label class="field">
+              <span class="login-field__label">Email</span>
+              <input type="email" name="email" value="${escapeAttribute(email)}" required>
+            </label>
+          </div>
+          <div class="report-grid">
+            <div class="field field--file-upload">
+              <span class="login-field__label">Profile Image</span>
+              <input class="file-upload-input" type="file" name="profileImage" id="profileImageInput" accept=".jpg,.jpeg,.png,.webp">
+              <label class="upload-file-summary" for="profileImageInput" id="profileImageSummary">
+                <span class="upload-file-summary__button">Choose Image</span>
+                <span class="upload-file-summary__placeholder" id="profileImagePlaceholder">${currentUser?.profileImage ? "Current image selected" : "No image chosen"}</span>
+              </label>
+            </div>
+            <div class="profile-status-card">
+              <span class="login-field__label">Account Status</span>
+              <span class="pill ${status === "Active" ? "pill--soft" : "pill--neutral"}">${escapeHtml(status)}</span>
+            </div>
+          </div>
+          <div class="inline-actions modal-card__actions">
+            <button class="button" type="submit">Save Profile</button>
+          </div>
+        </form>
+      </section>
+    </section>
+  `;
+
+  const profileForm = document.getElementById("profileForm");
+  const profileImageInput = document.getElementById("profileImageInput");
+  const profileImagePlaceholder = document.getElementById("profileImagePlaceholder");
+  const profileAvatarPreview = document.getElementById("profileAvatarPreview");
+
+  profileImageInput?.addEventListener("change", () => {
+    const selectedFile = profileImageInput.files?.[0];
+    if (!selectedFile) {
+      profileImagePlaceholder.textContent = currentUser?.profileImage ? "Current image selected" : "No image chosen";
+      return;
+    }
+
+    profileImagePlaceholder.textContent = selectedFile.name;
+    const reader = new FileReader();
+    reader.onload = () => {
+      profileAvatarPreview.innerHTML = `<img class="profile-avatar__image" src="${reader.result}" alt="Profile preview">`;
+    };
+    reader.readAsDataURL(selectedFile);
+  });
+
+  profileForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await apiRequest("update_profile", { method: "POST", body: new FormData(profileForm) });
+      addNotification("Profile Updated", "Your profile information was edited.");
+      showToast("Profile updated.");
+      render();
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+}
+
+function renderSettingsView() {
+  if (!isAdministrator()) {
+    navigate("home");
+    return;
+  }
+
+  const settings = state.db.settings || {};
+  app.innerHTML = `
+    <section class="view">
+      <section class="list-card profile-card">
+        <div class="section-heading profile-card__header">
+          <div>
+            <h1>Settings</h1>
+            <p>Edit the site title and description shown in the header.</p>
+          </div>
+          <a class="button button--ghost" href="#admin/dashboard">Back</a>
+        </div>
+        <form class="profile-form" id="settingsForm" enctype="multipart/form-data">
+          <label class="field">
+            <span class="login-field__label">Title</span>
+            <input type="text" name="siteTitle" value="${escapeAttribute(settings.siteTitle || "Learning Resource System")}" required>
+          </label>
+          <label class="field">
+            <span class="login-field__label">Description</span>
+            <input type="text" name="siteDescription" value="${escapeAttribute(settings.siteDescription || "School of Fisheries")}" required>
+          </label>
+          <div class="field field--file-upload">
+            <span class="login-field__label">Logo</span>
+            <input class="file-upload-input" type="file" name="siteLogo" id="siteLogoInput" accept=".jpg,.jpeg,.png,.webp,.svg">
+            <label class="upload-file-summary" for="siteLogoInput" id="siteLogoSummary">
+              <span class="upload-file-summary__button">Choose Logo</span>
+              <span class="upload-file-summary__placeholder" id="siteLogoPlaceholder">${settings.logoUrl ? "Current logo selected" : "No logo chosen"}</span>
+            </label>
+            ${settings.logoUrl ? `<div class="settings-logo-preview"><img src="${escapeAttribute(settings.logoUrl)}" alt="Current logo"></div>` : ""}
+          </div>
+          <div class="inline-actions modal-card__actions">
+            <button class="button" type="submit">Save Settings</button>
+          </div>
+        </form>
+      </section>
+    </section>
+  `;
+
+  document.getElementById("settingsForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await apiRequest("update_settings", { method: "POST", body: new FormData(event.currentTarget) });
+      addNotification("Settings Updated", "Site title and description were updated.");
+      showToast("Settings updated.");
+      render();
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
+  document.getElementById("siteLogoInput")?.addEventListener("change", (event) => {
+    const file = event.currentTarget.files?.[0];
+    const placeholder = document.getElementById("siteLogoPlaceholder");
+    if (placeholder) {
+      placeholder.textContent = file ? file.name : (settings.logoUrl ? "Current logo selected" : "No logo chosen");
+    }
+  });
 }
 
 function renderUploadModule(resource = null, options = {}) {
@@ -748,6 +1316,52 @@ function renderReportsModule() {
         <ul class="report-list">${statusReport.map((item) => `<li><span>${item.name}</span><strong>${item.total}</strong></li>`).join("")}</ul>
       </article>
     </div>
+  `;
+}
+
+function renderAuditLogModule() {
+  const auditLogs = Array.isArray(state.db.auditLogs) ? state.db.auditLogs : [];
+
+  return `
+    <section class="list-card category-management-card">
+      <div class="section-heading category-management-card__header">
+        <div>
+          <h3>Audit Log</h3>
+          <p>Track administrator sign-ins and account activity across resources, categories, users, and profile updates.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="audit-table">
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Account</th>
+              <th>Role</th>
+              <th>Action</th>
+              <th>Entity</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${auditLogs.length
+              ? auditLogs.map((log) => `
+                  <tr>
+                    <td>${escapeHtml(formatNotificationTime(log.createdAt))}</td>
+                    <td>
+                      <strong>${escapeHtml(log.actorName)}</strong><br>
+                      <span class="muted">${escapeHtml(log.actorUsername)}</span>
+                    </td>
+                    <td>${escapeHtml(log.actorRole)}</td>
+                    <td><span class="pill pill--soft">${escapeHtml(log.actionType)}</span></td>
+                    <td>${escapeHtml(log.entityType)}</td>
+                    <td>${escapeHtml(log.description)}</td>
+                  </tr>
+                `).join("")
+              : `<tr><td colspan="6"><span class="muted">No audit activity recorded yet.</span></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
   `;
 }
 
@@ -873,6 +1487,7 @@ function attachResourceTableEvents() {
         const formData = new FormData();
         formData.append("id", button.dataset.toggleResource);
         await apiRequest("toggle_resource", { method: "POST", body: formData });
+        addNotification("Resource Status Updated", resource ? `${resource.title} was reviewed or updated.` : "A resource status was changed.");
         showToast("Resource review status updated.");
         render();
       } catch (error) {
@@ -889,6 +1504,7 @@ function attachResourceTableEvents() {
         const formData = new FormData();
         formData.append("id", button.dataset.deleteResource);
         await apiRequest("delete_resource", { method: "POST", body: formData });
+        addNotification("Resource Deleted", resource ? `${resource.title} was deleted.` : "A resource was deleted.");
         showToast("Resource deleted.");
         render();
       } catch (error) {
@@ -953,7 +1569,7 @@ function attachCategoryEvents() {
   openButton.addEventListener("click", openModal);
   closeButton?.addEventListener("click", closeModal);
   cancelButton.addEventListener("click", closeModal);
-  closeViewButton.addEventListener("click", closeViewModal);
+  closeViewButton?.addEventListener("click", closeViewModal);
   closeViewFooterButton.addEventListener("click", closeViewModal);
 
   if (window.LRSCategoryModalEscapeHandler) {
@@ -976,6 +1592,11 @@ function attachCategoryEvents() {
     try {
       const isEdit = Boolean(form.querySelector('[name="id"]').value);
       await apiRequest(isEdit ? "update_category" : "create_category", { method: "POST", body: new FormData(event.currentTarget) });
+      const categoryName = form.querySelector('[name="name"]').value.trim();
+      addNotification(
+        isEdit ? "Category Updated" : "Category Added",
+        categoryName ? `${categoryName} was ${isEdit ? "updated" : "added"}.` : `A category was ${isEdit ? "updated" : "added"}.`
+      );
       showToast(isEdit ? "Category updated." : "Category added.");
       closeModal();
       render();
@@ -1010,6 +1631,7 @@ function attachCategoryEvents() {
         const formData = new FormData();
         formData.append("id", button.dataset.deleteCategory);
         await apiRequest("delete_category", { method: "POST", body: formData });
+        addNotification("Category Deleted", "A category was deleted.");
         showToast("Category deleted.");
         render();
       } catch (error) {
@@ -1124,8 +1746,10 @@ function attachUploadEvents(onComplete = null) {
     try {
       await apiRequest("save_resource", { method: "POST", body: payload });
       if (isEdit) {
+        addNotification("Resource Updated", `${form.querySelector('[name="title"]').value.trim() || "A resource"} was updated.`);
         showToast("Resource updated.");
       } else {
+        addNotification("Resource Uploaded", `${form.querySelector('[name="title"]').value.trim() || "A resource"} was uploaded.`);
         showToast("Resource uploaded.");
       }
       render();
@@ -1186,6 +1810,7 @@ function attachUserEvents() {
       event.preventDefault();
       try {
         await apiRequest("create_user", { method: "POST", body: new FormData(userForm) });
+        addNotification("User Added", `${userForm.querySelector('[name="fullName"]').value.trim() || "A user"} was added.`);
         showToast("User created.");
         if (userModal) {
           userModal.hidden = true;
@@ -1203,6 +1828,7 @@ function attachUserEvents() {
         const formData = new FormData();
         formData.append("id", button.dataset.toggleUser);
         await apiRequest("toggle_user", { method: "POST", body: formData });
+        addNotification("User Status Updated", "A user account status was changed.");
         showToast("User status updated.");
         render();
       } catch (error) {
@@ -1217,6 +1843,7 @@ function attachUserEvents() {
         const formData = new FormData();
         formData.append("id", button.dataset.deleteUser);
         await apiRequest("delete_user", { method: "POST", body: formData });
+        addNotification("User Deleted", "A user account was deleted.");
         showToast("User deleted.");
         render();
       } catch (error) {
@@ -1224,6 +1851,84 @@ function attachUserEvents() {
       }
     });
   });
+}
+
+function renderUsersModule() {
+  const canManageUsers = state.session?.role === "Administrator";
+  return `
+    <section class="list-card category-management-card">
+      <div class="section-heading category-management-card__header">
+        <div>
+          <h3>User List</h3>
+          <p>${canManageUsers ? "Manage administrator and encoder accounts from one place." : "Only administrators can add, activate, or remove user accounts."}</p>
+        </div>
+        ${canManageUsers ? `<button class="button" type="button" id="openUserModalButton">Add User</button>` : ""}
+      </div>
+      <div class="table-wrap">
+        <table class="user-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Username</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.db.users.map((user) => `
+              <tr>
+                <td><strong>${user.fullName}</strong></td>
+                <td><span class="muted">${user.username}</span></td>
+                <td>${user.role}</td>
+                <td><span class="pill ${user.status === "Active" ? "pill--soft" : "pill--neutral"}">${user.status}</span></td>
+                <td>
+                  <div class="table-actions user-table__actions">
+                    <button class="icon-button icon-button--soft" type="button" data-toggle-user="${user.id}" title="${user.status === "Active" ? "Deactivate user" : "Activate user"}" aria-label="${user.status === "Active" ? "Deactivate user" : "Activate user"}" ${canManageUsers ? "" : "disabled"}>
+                      <span aria-hidden="true">${user.status === "Active" ? "&#9680;" : "&#9654;"}</span>
+                    </button>
+                    <button class="icon-button icon-button--danger" type="button" data-delete-user="${user.id}" title="Delete user" aria-label="Delete user" ${canManageUsers ? "" : "disabled"}>
+                      <span aria-hidden="true">&#128465;</span>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    ${canManageUsers ? `
+      <div class="modal-backdrop" id="userModal" hidden>
+        <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="userModalTitle">
+          <div class="modal-card">
+            <div class="section-heading modal-card__header">
+              <div>
+                <h3 id="userModalTitle">Add User</h3>
+                <p>Create a new encoder or administrator account.</p>
+              </div>
+            </div>
+            <form id="userForm" class="modal-form">
+              <label class="field"><input type="text" name="fullName" placeholder="Full name" required></label>
+              <label class="field"><input type="email" name="email" placeholder="Email address" required></label>
+              <label class="field"><input type="text" name="username" placeholder="Username" required></label>
+              <label class="field"><input type="password" name="password" placeholder="Password" required></label>
+              <label class="field">
+                <select name="role" required>
+                  <option value="Encoder">Encoder</option>
+                  <option value="Administrator">Administrator</option>
+                </select>
+              </label>
+              <div class="inline-actions modal-card__actions">
+                <button class="button" type="submit">Save User</button>
+                <button class="button button--ghost" type="button" id="cancelUserModalButton">Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    ` : ""}
+  `;
 }
 
 function renderAdminView() {
@@ -1238,7 +1943,8 @@ function renderAdminView() {
         ["resources", "Learning Resource Management"],
         ["categories", "Category Management"],
         ["reports", "Reports"],
-        ["users", "User Management"]
+        ["users", "User Management"],
+        ["audit", "Audit Log"]
       ]
     : [
         ["dashboard", "Dashboard"],
@@ -1266,7 +1972,7 @@ function renderAdminView() {
         <aside class="admin-sidebar">
           <div>
             <h2>Admin Page</h2>
-            <p class="muted">${isAdministrator() ? "Manage learning resources, categories, reports, and users." : "Manage learning resources and categories."}</p>
+            <p class="muted">${isAdministrator() ? "Manage learning resources, categories, reports, users, and audit monitoring." : "Manage learning resources and categories."}</p>
           </div>
           <nav class="admin-nav" id="adminNav">
             ${adminModules.map(([key, label]) => `<button type="button" class="${module === key ? "active" : ""}" data-module="${key}">${label}</button>`).join("")}
@@ -1301,11 +2007,25 @@ function renderAdminView() {
         <div class="report-grid">
           <section class="list-card">
             <h3>Recent Uploads</h3>
-            <ul>${recentUploads.map((item) => `<li class="list-row"><span>${item.title}</span><strong>${formatDate(item.uploadDate)}</strong></li>`).join("")}</ul>
+            <ul class="dashboard-summary-list">
+              ${recentUploads.map((item) => `
+                <li class="dashboard-summary-list__item">
+                  <span class="dashboard-summary-list__title">${item.title}</span>
+                  <strong class="dashboard-summary-list__value">${formatCompactDate(item.uploadDate)}</strong>
+                </li>
+              `).join("")}
+            </ul>
           </section>
           <section class="list-card">
             <h3>Most Viewed Resources</h3>
-            <ul>${mostViewed.map((item) => `<li class="list-row"><span>${item.title}</span><strong>${item.views} views</strong></li>`).join("")}</ul>
+            <ul class="dashboard-summary-list">
+              ${mostViewed.map((item) => `
+                <li class="dashboard-summary-list__item">
+                  <span class="dashboard-summary-list__title">${item.title}</span>
+                  <strong class="dashboard-summary-list__value">${item.views} views</strong>
+                </li>
+              `).join("")}
+            </ul>
           </section>
         </div>
       `;
@@ -1324,6 +2044,9 @@ function renderAdminView() {
     case "users":
       moduleContent.innerHTML = renderUsersModule();
       attachUserEvents();
+      break;
+    case "audit":
+      moduleContent.innerHTML = renderAuditLogModule();
       break;
     default:
       navigate("admin/dashboard");
@@ -1351,6 +2074,16 @@ function render() {
 
   if (state.route.name === "resource") {
     renderResourceDetailsView(state.route.id);
+    return;
+  }
+
+  if (state.route.name === "profile") {
+    renderProfileView();
+    return;
+  }
+
+  if (state.route.name === "settings") {
+    renderSettingsView();
     return;
   }
 

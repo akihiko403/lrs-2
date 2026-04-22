@@ -66,6 +66,8 @@ function initialize_schema(PDO $pdo): void
         'CREATE TABLE IF NOT EXISTS users (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             full_name VARCHAR(140) NOT NULL,
+            email VARCHAR(190) NOT NULL,
+            profile_image VARCHAR(255) NULL,
             username VARCHAR(60) NOT NULL UNIQUE,
             password_hash VARCHAR(255) NOT NULL,
             role ENUM("Administrator", "Encoder") NOT NULL,
@@ -99,6 +101,30 @@ function initialize_schema(PDO $pdo): void
     );
 
     $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS audit_logs (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            user_id INT UNSIGNED NULL,
+            actor_name VARCHAR(140) NOT NULL,
+            actor_username VARCHAR(60) NOT NULL,
+            actor_role VARCHAR(40) NOT NULL,
+            action_type VARCHAR(80) NOT NULL,
+            entity_type VARCHAR(80) NOT NULL,
+            description TEXT NOT NULL,
+            target_id INT UNSIGNED NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_audit_logs_created_at (created_at),
+            INDEX idx_audit_logs_user_id (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS app_settings (
+            setting_key VARCHAR(120) PRIMARY KEY,
+            setting_value TEXT NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+
+    $pdo->exec(
         'ALTER TABLE resources
          MODIFY COLUMN status ENUM("Pending Review", "Active", "Inactive") NOT NULL DEFAULT "Active"'
     );
@@ -108,6 +134,20 @@ function initialize_schema(PDO $pdo): void
     } catch (Throwable $e) {
         // Column already exists on upgraded databases.
     }
+
+    try {
+        $pdo->exec('ALTER TABLE users ADD COLUMN email VARCHAR(190) NULL AFTER full_name');
+    } catch (Throwable $e) {
+        // Column already exists on upgraded databases.
+    }
+
+    try {
+        $pdo->exec('ALTER TABLE users ADD COLUMN profile_image VARCHAR(255) NULL AFTER email');
+    } catch (Throwable $e) {
+        // Column already exists on upgraded databases.
+    }
+
+    $pdo->exec('UPDATE users SET email = CONCAT(username, "@schooloffisheries.local") WHERE email IS NULL OR email = ""');
 }
 
 function ensure_upload_directory(string $uploadDir): void
@@ -119,6 +159,15 @@ function ensure_upload_directory(string $uploadDir): void
 
 function seed_defaults(PDO $pdo): void
 {
+    $settings = [
+        'site_title' => 'Learning Resource System',
+        'site_description' => 'School of Fisheries',
+    ];
+    $settingsStmt = $pdo->prepare('INSERT IGNORE INTO app_settings (setting_key, setting_value) VALUES (?, ?)');
+    foreach ($settings as $key => $value) {
+        $settingsStmt->execute([$key, $value]);
+    }
+
     $categoryCount = (int) $pdo->query('SELECT COUNT(*) FROM categories')->fetchColumn();
     if ($categoryCount === 0) {
         $categories = [
@@ -136,9 +185,9 @@ function seed_defaults(PDO $pdo): void
 
     $userCount = (int) $pdo->query('SELECT COUNT(*) FROM users')->fetchColumn();
     if ($userCount === 0) {
-        $stmt = $pdo->prepare('INSERT INTO users (full_name, username, password_hash, role, status) VALUES (?, ?, ?, ?, ?)');
-        $stmt->execute(['Marina Santos', 'admin', password_hash('admin123', PASSWORD_DEFAULT), 'Administrator', 'Active']);
-        $stmt->execute(['Joel Navarro', 'encoder', password_hash('encode123', PASSWORD_DEFAULT), 'Encoder', 'Active']);
+        $stmt = $pdo->prepare('INSERT INTO users (full_name, email, username, password_hash, role, status) VALUES (?, ?, ?, ?, ?, ?)');
+        $stmt->execute(['Marina Santos', 'admin@schooloffisheries.local', 'admin', password_hash('admin123', PASSWORD_DEFAULT), 'Administrator', 'Active']);
+        $stmt->execute(['Joel Navarro', 'encoder@schooloffisheries.local', 'encoder', password_hash('encode123', PASSWORD_DEFAULT), 'Encoder', 'Active']);
     }
 
     $resourceCount = (int) $pdo->query('SELECT COUNT(*) FROM resources')->fetchColumn();
