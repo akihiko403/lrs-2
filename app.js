@@ -1057,70 +1057,92 @@ function renderProfileView() {
   const currentUser = getCurrentUser();
   const email = currentUser?.email || `${state.session.username}@schooloffisheries.local`;
   const status = currentUser?.status || state.session.status || "Active";
+  const username = currentUser?.username || state.session.username || "";
+  const role = currentUser?.role || state.session.role || "";
 
   app.innerHTML = `
-    <section class="view">
-      <section class="list-card profile-card">
-        <div class="section-heading profile-card__header">
-          <div>
-            <h1>Profile</h1>
-            <p>View your account information.</p>
-          </div>
-          <a class="button button--ghost" href="#admin/dashboard">Back</a>
+    <section class="view profile-page">
+      <div class="section-heading profile-card__header">
+        <div>
+          <h1>Profile</h1>
+          <p>Manage your account information.</p>
         </div>
-        <div class="profile-card__identity">
-          <div class="profile-avatar" id="profileAvatarPreview">${getProfileImageMarkup(currentUser)}</div>
-          <div>
-          <span class="pill pill--soft">${state.session.role}</span>
-          <h2>${escapeHtml(currentUser?.fullName || state.session.fullName)}</h2>
-          </div>
+        <a class="button button--ghost" href="#admin/dashboard">Back</a>
+      </div>
+
+      <section class="list-card profile-settings-card">
+        <div class="profile-settings-card__heading">
+          <h2>General</h2>
+          <p>Public information about your account.</p>
         </div>
-        <form class="profile-form" id="profileForm" enctype="multipart/form-data">
-          <div class="report-grid">
-            <label class="field">
-              <span class="login-field__label">Name</span>
-              <input type="text" name="fullName" value="${escapeAttribute(currentUser?.fullName || state.session.fullName)}" required>
-            </label>
-            <label class="field">
-              <span class="login-field__label">Email</span>
-              <input type="email" name="email" value="${escapeAttribute(email)}" required>
-            </label>
-          </div>
-          <div class="report-grid">
-            <div class="field field--file-upload">
-              <span class="login-field__label">Profile Image</span>
+        <form class="profile-form profile-settings-form" id="profileForm" enctype="multipart/form-data">
+          <div class="profile-settings-form__layout">
+            <div class="profile-settings-avatar-panel">
+              <div class="profile-avatar profile-avatar--large" id="profileAvatarPreview">${getProfileImageMarkup(currentUser)}</div>
               <input class="file-upload-input" type="file" name="profileImage" id="profileImageInput" accept=".jpg,.jpeg,.png,.webp">
-              <label class="upload-file-summary" for="profileImageInput" id="profileImageSummary">
-                <span class="upload-file-summary__button">Choose Image</span>
-                <span class="upload-file-summary__placeholder" id="profileImagePlaceholder">${currentUser?.profileImage ? "Current image selected" : "No image chosen"}</span>
+              <label class="profile-settings-avatar-panel__link" for="profileImageInput">Update image</label>
+            </div>
+
+            <div class="profile-settings-fields">
+              <label class="profile-info-row">
+                <span class="profile-info-row__label">Displayed Name</span>
+                <input type="text" value="${escapeAttribute(username)}" readonly>
+              </label>
+              <label class="profile-info-row">
+                <span class="profile-info-row__label">Full Name</span>
+                <input type="text" name="fullName" value="${escapeAttribute(currentUser?.fullName || state.session.fullName)}" required>
+              </label>
+              <label class="profile-info-row">
+                <span class="profile-info-row__label">Role</span>
+                <input type="text" value="${escapeAttribute(role)}" readonly>
+              </label>
+              <label class="profile-info-row">
+                <span class="profile-info-row__label">Email</span>
+                <input type="email" name="email" value="${escapeAttribute(email)}" required>
+              </label>
+              <label class="profile-info-row">
+                <span class="profile-info-row__label">Account Status</span>
+                <input type="text" value="${escapeAttribute(status)}" readonly>
               </label>
             </div>
-            <div class="profile-status-card">
-              <span class="login-field__label">Account Status</span>
-              <span class="pill ${status === "Active" ? "pill--soft" : "pill--neutral"}">${escapeHtml(status)}</span>
-            </div>
           </div>
-          <div class="inline-actions modal-card__actions">
+
+          <div class="inline-actions modal-card__actions profile-settings-form__actions">
             <button class="button" type="submit">Save Profile</button>
           </div>
         </form>
+      </section>
+
+      <section class="list-card profile-settings-card">
+        <div class="profile-settings-card__heading">
+          <h2>Login info</h2>
+          <p>The credentials for authorization.</p>
+        </div>
+        <div class="profile-login-fields">
+          <label class="profile-info-row">
+            <span class="profile-info-row__label">Username</span>
+            <input type="text" value="${escapeAttribute(username)}" readonly>
+          </label>
+          <label class="profile-info-row">
+            <span class="profile-info-row__label">Password</span>
+            <input type="text" value=".............." readonly>
+          </label>
+          <div class="inline-actions profile-login-fields__actions">
+            <button class="button button--soft" type="button" id="changePasswordButton">Change password</button>
+          </div>
+        </div>
       </section>
     </section>
   `;
 
   const profileForm = document.getElementById("profileForm");
   const profileImageInput = document.getElementById("profileImageInput");
-  const profileImagePlaceholder = document.getElementById("profileImagePlaceholder");
   const profileAvatarPreview = document.getElementById("profileAvatarPreview");
 
   profileImageInput?.addEventListener("change", () => {
     const selectedFile = profileImageInput.files?.[0];
-    if (!selectedFile) {
-      profileImagePlaceholder.textContent = currentUser?.profileImage ? "Current image selected" : "No image chosen";
-      return;
-    }
+    if (!selectedFile) return;
 
-    profileImagePlaceholder.textContent = selectedFile.name;
     const reader = new FileReader();
     reader.onload = () => {
       profileAvatarPreview.innerHTML = `<img class="profile-avatar__image" src="${reader.result}" alt="Profile preview">`;
@@ -1139,6 +1161,10 @@ function renderProfileView() {
       showToast(error.message);
     }
   });
+
+  document.getElementById("changePasswordButton")?.addEventListener("click", () => {
+    showToast("Please contact the administrator to reset your password.");
+  });
 }
 
 function renderSettingsView() {
@@ -1148,13 +1174,21 @@ function renderSettingsView() {
   }
 
   const settings = state.db.settings || {};
+  const settingsLogoMarkup = settings.logoUrl
+    ? `<img class="settings-header__avatar-image" src="${escapeAttribute(settings.logoUrl)}" alt="${escapeAttribute(settings.siteTitle || "Site logo")}">`
+    : `<span class="settings-header__avatar-fallback" aria-hidden="true">SF</span>`;
   app.innerHTML = `
     <section class="view">
       <section class="list-card profile-card">
         <div class="section-heading profile-card__header">
-          <div>
-            <h1>Settings</h1>
-            <p>Edit the site title and description shown in the header.</p>
+          <div class="settings-header">
+            <div class="settings-header__avatar">
+              ${settingsLogoMarkup}
+            </div>
+            <div>
+              <h1>Settings</h1>
+              <p>Edit the site title and description shown in the header.</p>
+            </div>
           </div>
           <a class="button button--ghost" href="#admin/dashboard">Back</a>
         </div>
@@ -1943,8 +1977,8 @@ function renderAdminView() {
         ["resources", "Learning Resource Management"],
         ["categories", "Category Management"],
         ["reports", "Reports"],
-        ["users", "User Management"],
-        ["audit", "Audit Log"]
+        ["audit", "Audit Log"],
+        ["users", "User Management"]
       ]
     : [
         ["dashboard", "Dashboard"],
@@ -2055,6 +2089,7 @@ function renderAdminView() {
 
 function render() {
   state.route = parseRoute();
+  document.body.classList.toggle("admin-route", state.route.name === "admin");
   updateTopbar();
 
   if (state.loading) {
