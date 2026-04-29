@@ -80,6 +80,10 @@ try {
             ensure_method('POST', $method);
             update_profile_action();
             break;
+        case 'change_password':
+            ensure_method('POST', $method);
+            change_password_action();
+            break;
         case 'update_settings':
             ensure_method('POST', $method);
             require_administrator();
@@ -666,6 +670,54 @@ function update_profile_action(): void
     $_SESSION['user']['status'] = $_SESSION['user']['status'] ?? $existing['status'];
 
     log_audit_event('edit', 'profile', 'Updated personal profile information.', $userId);
+
+    respond([
+        'ok' => true,
+        'session' => current_session_payload(),
+        'db' => database_payload(true),
+    ]);
+}
+
+function change_password_action(): void
+{
+    $userId = (int) ($_SESSION['user']['id'] ?? 0);
+    if ($userId <= 0) {
+        error_response('Unauthorized.', 401);
+    }
+
+    $currentPassword = trim((string) ($_POST['currentPassword'] ?? ''));
+    $newPassword = trim((string) ($_POST['newPassword'] ?? ''));
+    $confirmPassword = trim((string) ($_POST['confirmPassword'] ?? ''));
+
+    if ($currentPassword === '' || $newPassword === '' || $confirmPassword === '') {
+        error_response('Please complete all password fields.', 422);
+    }
+
+    if (strlen($newPassword) < 8) {
+        error_response('New password must be at least 8 characters long.', 422);
+    }
+
+    if ($newPassword !== $confirmPassword) {
+        error_response('New password and confirmation do not match.', 422);
+    }
+
+    if ($currentPassword === $newPassword) {
+        error_response('New password must be different from your current password.', 422);
+    }
+
+    $pdo = db();
+    $lookup = $pdo->prepare('SELECT password_hash FROM users WHERE id = ? LIMIT 1');
+    $lookup->execute([$userId]);
+    $user = $lookup->fetch();
+
+    if (!$user || !password_verify($currentPassword, $user['password_hash'])) {
+        error_response('Current password is incorrect.', 422);
+    }
+
+    $stmt = $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+    $stmt->execute([password_hash($newPassword, PASSWORD_DEFAULT), $userId]);
+
+    log_audit_event('edit', 'account', 'Changed account password.', $userId);
 
     respond([
         'ok' => true,
