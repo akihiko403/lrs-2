@@ -54,6 +54,12 @@ function escapeAttribute(value) {
   return escapeHtml(value).replace(/`/g, "&#096;");
 }
 
+function buildAssetUrl(path, version) {
+  if (!path) return "";
+  const separator = path.includes("?") ? "&" : "?";
+  return version ? `${path}${separator}v=${encodeURIComponent(version)}` : path;
+}
+
 function formatDate(dateString) {
   return new Date(dateString).toLocaleDateString("en-US", {
     year: "numeric",
@@ -78,6 +84,8 @@ function applyBranding() {
   const title = state.db.settings?.siteTitle || "Learning Resource System";
   const description = state.db.settings?.siteDescription || "School of Fisheries";
   const logoUrl = state.db.settings?.logoUrl || "";
+  const logoVersion = state.db.settings?.logoUpdatedAt || "";
+  const logoAssetUrl = buildAssetUrl(logoUrl, logoVersion);
 
   if (brandTitle) {
     brandTitle.textContent = title;
@@ -92,14 +100,23 @@ function applyBranding() {
   }
 
   if (brandMark) {
-    if (logoUrl) {
-      brandMark.innerHTML = `<img class="brand-mark__image" src="${escapeAttribute(logoUrl)}" alt="${escapeAttribute(title)}">`;
+    if (logoAssetUrl) {
+      brandMark.innerHTML = `<img class="brand-mark__image" src="${escapeAttribute(logoAssetUrl)}" alt="${escapeAttribute(title)}">`;
     } else {
       brandMark.textContent = "SF";
     }
   }
 
   document.title = `${description} ${title}`.trim();
+
+  let favicon = document.getElementById("appFavicon");
+  if (!favicon) {
+    favicon = document.createElement("link");
+    favicon.id = "appFavicon";
+    favicon.rel = "icon";
+    document.head.appendChild(favicon);
+  }
+  favicon.href = logoAssetUrl || favicon.dataset.defaultIcon || favicon.href;
 }
 
 function getProfileImageMarkup(user) {
@@ -1400,8 +1417,9 @@ function renderSettingsView() {
   }
 
   const settings = state.db.settings || {};
+  const settingsLogoUrl = buildAssetUrl(settings.logoUrl || "", settings.logoUpdatedAt || "");
   const settingsLogoMarkup = settings.logoUrl
-    ? `<img class="settings-header__avatar-image" src="${escapeAttribute(settings.logoUrl)}" alt="${escapeAttribute(settings.siteTitle || "Site logo")}">`
+    ? `<img class="settings-header__avatar-image" src="${escapeAttribute(settingsLogoUrl)}" alt="${escapeAttribute(settings.siteTitle || "Site logo")}">`
     : `<span class="settings-header__avatar-fallback" aria-hidden="true">SF</span>`;
   app.innerHTML = `
     <section class="view">
@@ -1434,7 +1452,7 @@ function renderSettingsView() {
               <span class="upload-file-summary__button">Choose Logo</span>
               <span class="upload-file-summary__placeholder" id="siteLogoPlaceholder">${settings.logoUrl ? "Current logo selected" : "No logo chosen"}</span>
             </label>
-            ${settings.logoUrl ? `<div class="settings-logo-preview"><img src="${escapeAttribute(settings.logoUrl)}" alt="Current logo"></div>` : ""}
+            ${settings.logoUrl ? `<div class="settings-logo-preview"><img src="${escapeAttribute(settingsLogoUrl)}" alt="Current logo"></div>` : ""}
           </div>
           <div class="inline-actions modal-card__actions">
             <button class="button" type="submit">Save Settings</button>
