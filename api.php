@@ -302,10 +302,20 @@ function settings_payload(PDO $pdo): array
         $settings[$row['setting_key']] = $row['setting_value'];
     }
 
+    $logoUrl = $settings['site_logo_url'] ?? '';
+    $logoUpdatedAt = '';
+    if ($logoUrl !== '') {
+        $logoPath = app_config()['upload_dir'] . DIRECTORY_SEPARATOR . basename((string) $logoUrl);
+        if (is_file($logoPath)) {
+            $logoUpdatedAt = (string) filemtime($logoPath);
+        }
+    }
+
     return [
         'siteTitle' => $settings['site_title'] ?? 'Learning Resource System',
         'siteDescription' => $settings['site_description'] ?? 'School of Fisheries',
-        'logoUrl' => $settings['site_logo_url'] ?? '',
+        'logoUrl' => $logoUrl,
+        'logoUpdatedAt' => $logoUpdatedAt,
     ];
 }
 

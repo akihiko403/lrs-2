@@ -638,10 +638,20 @@ class LegacyApiService
             ->get()
             ->pluck('setting_value', 'setting_key');
 
+        $logoUrl = $settings['site_logo_url'] ?? '';
+        $logoUpdatedAt = '';
+        if ($logoUrl !== '') {
+            $logoPath = $this->uploadDir() . DIRECTORY_SEPARATOR . basename((string) $logoUrl);
+            if (is_file($logoPath)) {
+                $logoUpdatedAt = (string) filemtime($logoPath);
+            }
+        }
+
         return [
             'siteTitle' => $settings['site_title'] ?? 'Learning Resource System',
             'siteDescription' => $settings['site_description'] ?? 'School of Fisheries',
-            'logoUrl' => $settings['site_logo_url'] ?? '',
+            'logoUrl' => $logoUrl,
+            'logoUpdatedAt' => $logoUpdatedAt,
         ];
     }
 
@@ -892,6 +902,7 @@ class LegacyApiService
             }
 
             $originalName = $uploadFile->getClientOriginalName();
+            $mimeType = $uploadFile->getMimeType() ?: 'application/octet-stream';
             $fileType = $this->detectFileTypeFromName($originalName);
             if (!in_array($fileType, ['PDF', 'Video', 'Data'], true)) {
                 throw new LegacyApiException('One of the uploaded files has an unsupported type.', 422);
@@ -909,7 +920,7 @@ class LegacyApiService
                 'dataText' => $fileType === 'Data' ? (string) file_get_contents($this->uploadDir() . DIRECTORY_SEPARATOR . $storedFilename) : null,
                 'storedFilename' => $storedFilename,
                 'originalFilename' => $originalName,
-                'mimeType' => $uploadFile->getMimeType() ?: 'application/octet-stream',
+                'mimeType' => $mimeType,
             ];
         }
 
