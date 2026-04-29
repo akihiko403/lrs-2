@@ -26,7 +26,8 @@ if not exist "%APP_DIR%node_modules" (
 )
 
 echo Starting Laravel server and Vite dev server...
-start "Laravel Server" cmd /k "cd /d "%APP_DIR%" && php artisan serve"
-start "Vite Dev Server" cmd /k "cd /d "%APP_DIR%" && npm run dev"
+start "" powershell -NoProfile -WindowStyle Hidden -Command "Start-Process php -WorkingDirectory '%APP_DIR%' -ArgumentList 'artisan','serve' -WindowStyle Hidden"
+start "" powershell -NoProfile -WindowStyle Hidden -Command "Start-Process npm -WorkingDirectory '%APP_DIR%' -ArgumentList 'run','dev' -WindowStyle Hidden"
+start "" powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 3; Start-Process 'http://127.0.0.1:8000'"
 
 exit /b 0
