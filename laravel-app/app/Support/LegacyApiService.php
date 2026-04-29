@@ -892,6 +892,7 @@ class LegacyApiService
             }
 
             $originalName = $uploadFile->getClientOriginalName();
+            $mimeType = $uploadFile->getMimeType() ?: 'application/octet-stream';
             $fileType = $this->detectFileTypeFromName($originalName);
             if (!in_array($fileType, ['PDF', 'Video', 'Data'], true)) {
                 throw new LegacyApiException('One of the uploaded files has an unsupported type.', 422);
@@ -909,7 +910,7 @@ class LegacyApiService
                 'dataText' => $fileType === 'Data' ? (string) file_get_contents($this->uploadDir() . DIRECTORY_SEPARATOR . $storedFilename) : null,
                 'storedFilename' => $storedFilename,
                 'originalFilename' => $originalName,
-                'mimeType' => $uploadFile->getMimeType() ?: 'application/octet-stream',
+                'mimeType' => $mimeType,
             ];
         }
 
