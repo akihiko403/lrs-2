@@ -187,6 +187,66 @@ function formatBytes(bytes) {
   return `${value >= 10 || exponent === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[exponent]}`;
 }
 
+function getUploadListActionIcon(type) {
+  if (type === "view") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M1.5 12s3.8-6.5 10.5-6.5S22.5 12 22.5 12s-3.8 6.5-10.5 6.5S1.5 12 1.5 12Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+        <circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"></circle>
+      </svg>
+    `;
+  }
+
+  if (type === "download") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 3.5v10.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+        <path d="m8.2 10.8 3.8 3.8 3.8-3.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M4.5 18.5h15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+      </svg>
+    `;
+  }
+
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4.5 7.5h15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+      <path d="M9.5 3.8h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+      <path d="M7.5 7.5v11a1.5 1.5 0 0 0 1.5 1.5h6a1.5 1.5 0 0 0 1.5-1.5v-11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+      <path d="M10 11v5M14 11v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+    </svg>
+  `;
+}
+
+function getExistingFileLabel(file, fallbackTitle, index) {
+  return file?.originalFilename || `${fallbackTitle || "Resource"}-${index + 1}`;
+}
+
+function buildExistingFileItemMarkup(file, index, fallbackTitle) {
+  const fileLabel = getExistingFileLabel(file, fallbackTitle, index);
+  const fileUrl = file?.resourceUrl || "";
+  const fileType = file?.fileType || "File";
+
+  return `
+    <article class="existing-files-card__item">
+      <div class="existing-files-card__content">
+        <strong>${escapeHtml(fileLabel)}</strong>
+        <span>${escapeHtml(fileType)}</span>
+      </div>
+      <div class="existing-files-card__actions">
+        <button class="icon-button icon-button--ghost existing-files-card__action" type="button" data-view-existing-file="${index}" aria-label="View ${escapeAttribute(fileLabel)}" title="View">
+          ${getUploadListActionIcon("view")}
+        </button>
+        <a class="icon-button icon-button--ghost existing-files-card__action" data-download-existing-file="${index}" href="${escapeAttribute(fileUrl || "#")}" ${fileUrl ? `download="${escapeAttribute(fileLabel)}"` : ""} aria-label="Download ${escapeAttribute(fileLabel)}" title="Download" ${fileUrl ? "" : 'aria-disabled="true" tabindex="-1"'}>
+          ${getUploadListActionIcon("download")}
+        </a>
+        <button class="icon-button icon-button--danger existing-files-card__action" type="button" data-remove-existing-file="${index}" aria-label="Delete ${escapeAttribute(fileLabel)}" title="Delete">
+          ${getUploadListActionIcon("delete")}
+        </button>
+      </div>
+    </article>
+  `;
+}
+
 function loadNotifications() {
   try {
     const parsed = JSON.parse(localStorage.getItem(NOTIFICATIONS_STORAGE_KEY) || "[]");
@@ -846,6 +906,9 @@ function renderResourcesTable(resources) {
               <td><span class="pill ${getResourceStatusClass(resource.status)}">${resource.status}</span></td>
               <td>${resource.views}</td>
               <td class="table-actions">
+                <button class="icon-button icon-button--ghost" type="button" data-view-resource="${resource.id}" title="View resource" aria-label="View resource">
+                  <span aria-hidden="true">◉</span>
+                </button>
                 <button class="icon-button icon-button--ghost" type="button" data-edit-resource="${resource.id}" title="Edit resource" aria-label="Edit resource">
                   <span aria-hidden="true">✎</span>
                 </button>
@@ -1255,13 +1318,9 @@ function renderUploadModule(resource = null, options = {}) {
             <strong>Uploaded Files</strong>
             <span>${resourceFiles.length} file${resourceFiles.length === 1 ? "" : "s"}</span>
           </div>
-          <div class="existing-files-card__list">
-            ${resourceFiles.map((file, index) => `
-              <article class="existing-files-card__item">
-                <strong>${escapeHtml(file.originalFilename || `${resource?.title || "Resource"}-${index + 1}`)}</strong>
-                <span>${escapeHtml(file.fileType || resource?.fileType || "File")}</span>
-              </article>
-            `).join("")}
+          <input type="hidden" name="retainedExistingFiles" value="${escapeAttribute(JSON.stringify(resourceFiles))}" id="retainedExistingFilesInput">
+          <div class="existing-files-card__list" id="existingFilesList">
+            ${resourceFiles.map((file, index) => buildExistingFileItemMarkup(file, index, resource?.title || "Resource")).join("")}
           </div>
         </section>
       `
@@ -1554,6 +1613,12 @@ function attachResourceTableEvents() {
       openModal(resource);
     });
   });
+
+  document.querySelectorAll("[data-view-resource]").forEach((button) => {
+    button.addEventListener("click", () => {
+      navigate(`resource/${button.dataset.viewResource}`);
+    });
+  });
 }
 
 function attachCategoryEvents() {
@@ -1682,9 +1747,22 @@ function attachUploadEvents(onComplete = null) {
   const uploadSummary = form.querySelector("#resourceUploadSummary");
   const uploadPlaceholder = form.querySelector("#resourceUploadPlaceholder");
   const uploadList = form.querySelector("#resourceUploadList");
+  const retainedExistingFilesInput = form.querySelector("#retainedExistingFilesInput");
+  const existingFilesList = form.querySelector("#existingFilesList");
+  const existingFilesCount = form.querySelector(".existing-files-card__header span");
   const allowedUploadExtensions = new Set(["pdf", "mp4", "mov", "csv", "json", "txt", "jpeg", "jpg"]);
   const maxUploadBytes = 256 * 1024 * 1024;
   let selectedFiles = Array.from(uploadInput?.files || []);
+  let retainedExistingFiles = [];
+
+  if (retainedExistingFilesInput?.value) {
+    try {
+      const parsed = JSON.parse(retainedExistingFilesInput.value);
+      retainedExistingFiles = Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      retainedExistingFiles = [];
+    }
+  }
 
   const updateUploadSummary = () => {
     if (!uploadSummary || !uploadInput || !uploadPlaceholder || !uploadList) return;
@@ -1700,10 +1778,23 @@ function attachUploadEvents(onComplete = null) {
     uploadPlaceholder.hidden = true;
     uploadList.hidden = false;
     uploadList.innerHTML = files.map((file, index) => `
-      <span class="upload-file-chip">
-        <span class="upload-file-chip__name">${escapeHtml(file.name)}</span>
-        <button class="upload-file-chip__remove" type="button" data-remove-upload="${index}" aria-label="Remove ${escapeAttribute(file.name)}">x</button>
-      </span>
+      <article class="upload-file-list__item">
+        <div class="upload-file-list__content">
+          <strong>${escapeHtml(file.name)}</strong>
+          <span>${escapeHtml((file.name.split(".").pop() || "file").toUpperCase())} - ${formatBytes(file.size || 0)}</span>
+        </div>
+        <div class="upload-file-list__actions">
+          <button class="icon-button icon-button--ghost upload-file-list__action" type="button" data-view-upload="${index}" aria-label="View ${escapeAttribute(file.name)}" title="View">
+            ${getUploadListActionIcon("view")}
+          </button>
+          <button class="icon-button icon-button--ghost upload-file-list__action" type="button" data-download-upload="${index}" aria-label="Download ${escapeAttribute(file.name)}" title="Download">
+            ${getUploadListActionIcon("download")}
+          </button>
+          <button class="icon-button icon-button--danger upload-file-list__action" type="button" data-remove-upload="${index}" aria-label="Delete ${escapeAttribute(file.name)}" title="Delete">
+            ${getUploadListActionIcon("delete")}
+          </button>
+        </div>
+      </article>
     `).join("");
     uploadSummary.classList.add("has-files");
   };
@@ -1715,7 +1806,27 @@ function attachUploadEvents(onComplete = null) {
     uploadInput.files = dataTransfer.files;
   };
 
+  const syncRetainedExistingFiles = () => {
+    if (retainedExistingFilesInput) {
+      retainedExistingFilesInput.value = JSON.stringify(retainedExistingFiles);
+    }
+  };
+
+  const updateExistingFilesSummary = () => {
+    if (!existingFilesList || !retainedExistingFilesInput) return;
+    if (existingFilesCount) {
+      existingFilesCount.textContent = `${retainedExistingFiles.length} file${retainedExistingFiles.length === 1 ? "" : "s"}`;
+    }
+    existingFilesList.innerHTML = retainedExistingFiles.map((file, index) => buildExistingFileItemMarkup(file, index, form.querySelector('[name="title"]')?.value.trim() || "Resource")).join("");
+    const card = existingFilesList.closest(".existing-files-card");
+    if (card) {
+      card.hidden = retainedExistingFiles.length === 0;
+    }
+    syncRetainedExistingFiles();
+  };
+
   updateUploadSummary();
+  updateExistingFilesSummary();
   uploadInput?.addEventListener("change", () => {
     const incomingFiles = Array.from(uploadInput.files || []);
     if (!incomingFiles.length) return;
@@ -1755,14 +1866,70 @@ function attachUploadEvents(onComplete = null) {
     updateUploadSummary();
   });
   uploadList?.addEventListener("click", (event) => {
+    const actionButton = event.target.closest("button");
+    if (actionButton) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    const viewButton = event.target.closest("[data-view-upload]");
+    if (viewButton) {
+      const file = selectedFiles[Number(viewButton.dataset.viewUpload)];
+      if (!file) return;
+      const previewUrl = URL.createObjectURL(file);
+      window.open(previewUrl, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(previewUrl), 60000);
+      return;
+    }
+
+    const downloadButton = event.target.closest("[data-download-upload]");
+    if (downloadButton) {
+      const file = selectedFiles[Number(downloadButton.dataset.downloadUpload)];
+      if (!file) return;
+      const downloadUrl = URL.createObjectURL(file);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = file.name || "download";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
+      return;
+    }
+
     const removeButton = event.target.closest("[data-remove-upload]");
     if (!removeButton) return;
-    event.preventDefault();
-    event.stopPropagation();
     const index = Number(removeButton.dataset.removeUpload);
     selectedFiles = selectedFiles.filter((_, fileIndex) => fileIndex !== index);
     syncInputFiles();
     updateUploadSummary();
+  });
+
+  existingFilesList?.addEventListener("click", (event) => {
+    const viewButton = event.target.closest("[data-view-existing-file]");
+    if (viewButton) {
+      event.preventDefault();
+      const file = retainedExistingFiles[Number(viewButton.dataset.viewExistingFile)];
+      if (!file?.resourceUrl) return;
+      window.open(file.resourceUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    const downloadLink = event.target.closest("[data-download-existing-file]");
+    if (downloadLink) {
+      const file = retainedExistingFiles[Number(downloadLink.dataset.downloadExistingFile)];
+      if (!file?.resourceUrl) {
+        event.preventDefault();
+      }
+      return;
+    }
+
+    const removeButton = event.target.closest("[data-remove-existing-file]");
+    if (!removeButton) return;
+    event.preventDefault();
+    const index = Number(removeButton.dataset.removeExistingFile);
+    retainedExistingFiles = retainedExistingFiles.filter((_, fileIndex) => fileIndex !== index);
+    updateExistingFilesSummary();
   });
 
   form.addEventListener("submit", async (event) => {
@@ -2029,9 +2196,12 @@ function renderAdminView() {
   });
 
   const moduleContent = document.getElementById("adminModuleContent");
+  const renderAdminModulePanel = (content) => {
+    moduleContent.innerHTML = `<div class="admin-module-panel">${content}</div>`;
+  };
   switch (module) {
     case "dashboard":
-      moduleContent.innerHTML = `
+      renderAdminModulePanel(`
         <div class="stats-grid">
           <article class="stat-card"><h3>Total Resources</h3><strong>${state.db.resources.length}</strong><span class="muted">All uploaded learning items</span></article>
           <article class="stat-card"><h3>Pending Resources</h3><strong>${pendingResourcesCount}</strong><span class="muted">Resources awaiting review</span></article>
@@ -2062,25 +2232,25 @@ function renderAdminView() {
             </ul>
           </section>
         </div>
-      `;
+      `);
       break;
     case "resources":
-      moduleContent.innerHTML = renderResourcesTable(resources);
+      renderAdminModulePanel(renderResourcesTable(resources));
       attachResourceTableEvents();
       break;
     case "categories":
-      moduleContent.innerHTML = renderCategoriesModule();
+      renderAdminModulePanel(renderCategoriesModule());
       attachCategoryEvents();
       break;
     case "reports":
-      moduleContent.innerHTML = renderReportsModule();
+      renderAdminModulePanel(renderReportsModule());
       break;
     case "users":
-      moduleContent.innerHTML = renderUsersModule();
+      renderAdminModulePanel(renderUsersModule());
       attachUserEvents();
       break;
     case "audit":
-      moduleContent.innerHTML = renderAuditLogModule();
+      renderAdminModulePanel(renderAuditLogModule());
       break;
     default:
       navigate("admin/dashboard");

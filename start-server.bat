@@ -1,11 +1,6 @@
 @echo off
 setlocal
 
-if /I not "%~1"=="__run" (
-  start "LRS Server" cmd /k ""%~f0" __run"
-  exit /b 0
-)
-
 set "PHP_EXE=C:\php-8.3.14-nts-Win32-vs16-x64\php.exe"
 set "PHP_INI=%~dp0php.ini"
 

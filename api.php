@@ -434,6 +434,7 @@ function save_resource_action(): void
     }
 
     $existingFiles = $existing ? normalize_resource_files_from_row($existing) : [];
+    $existingFiles = filter_retained_existing_files($existingFiles, $_POST['retainedExistingFiles'] ?? null);
     $fileBuild = build_resource_files($title, $resourceUrl, $dataText, $_FILES['uploadFile'] ?? null, $existingFiles);
     $resourceFiles = $fileBuild['files'];
     $fileType = $fileBuild['fileType'];
@@ -800,6 +801,54 @@ function normalize_resource_files_from_row(array $row): array
     }
 
     return [];
+}
+
+function resource_file_signature(array $file): string
+{
+    return sha1(json_encode([
+        'storedFilename' => $file['storedFilename'] ?? null,
+        'resourceUrl' => $file['resourceUrl'] ?? null,
+        'originalFilename' => $file['originalFilename'] ?? null,
+        'mimeType' => $file['mimeType'] ?? null,
+        'fileType' => $file['fileType'] ?? null,
+        'dataTextHash' => isset($file['dataText']) ? sha1((string) $file['dataText']) : null,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+function filter_retained_existing_files(array $existingFiles, $retainedPayload): array
+{
+    if ($retainedPayload === null || $retainedPayload === '') {
+        return $existingFiles;
+    }
+
+    $decoded = json_decode((string) $retainedPayload, true);
+    if (!is_array($decoded)) {
+        return $existingFiles;
+    }
+
+    $allowedSignatures = [];
+    foreach ($decoded as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+
+        $allowedSignatures[] = resource_file_signature([
+            'storedFilename' => $file['storedFilename'] ?? null,
+            'resourceUrl' => $file['resourceUrl'] ?? null,
+            'originalFilename' => $file['originalFilename'] ?? null,
+            'mimeType' => $file['mimeType'] ?? null,
+            'fileType' => $file['fileType'] ?? null,
+            'dataText' => $file['dataText'] ?? null,
+        ]);
+    }
+
+    if (!$allowedSignatures) {
+        return [];
+    }
+
+    return array_values(array_filter($existingFiles, static function (array $file) use ($allowedSignatures): bool {
+        return in_array(resource_file_signature($file), $allowedSignatures, true);
+    }));
 }
 
 function detect_file_type_from_name(string $filename): string
